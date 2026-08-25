@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.3"
+let clientVersion = "1.2.4"
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     func recordWindow() {
         guard listening else { return }; let file = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]
-        do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > -42 { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > 0.65 { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.finishWindow(file, recordingID: activeID) } } catch { setStatus(error.localizedDescription); stopLocal() }
+        do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > -30 { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > 0.55 { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + 12) { self.finishWindow(file, recordingID: activeID) } } catch { setStatus(error.localizedDescription); stopLocal() }
     }
     func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech; recorder = nil; if send { api.upload(file, connectionID: connectionID) { result in if case .failure(let error) = result { self.setStatus(error.localizedDescription) } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
     @objc func stopListening() { stopLocal(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
