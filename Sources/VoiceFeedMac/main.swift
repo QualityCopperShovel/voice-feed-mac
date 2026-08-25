@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.5"
+let clientVersion = "1.2.6"
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -127,7 +127,9 @@ final class API {
 // microphone permission, and the bounded recording loop.
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, recordingID = 0, windowStartedAt = Date(), lastSpeechAt = Date()
+    var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
+    var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, desiredListening = false, leaseRenewalInFlight = false, reconnectAttempt = 0, recordingID = 0
+    var windowStartedAt = Date(), lastSpeechAt = Date()
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -153,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         if alert.runModal() == .alertFirstButtonReturn { connectDevice() }
     }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.status.title = text; self.refreshMenu() } }
-    func refreshMenu() { connect.isHidden = api.token != nil; start.isHidden = api.token == nil || listening; stop.isHidden = !listening }
+    func refreshMenu() { connect.isHidden = api.token != nil; start.isHidden = api.token == nil || desiredListening; stop.isHidden = !desiredListening }
     @objc func openDevices() { NSWorkspace.shared.open(URL(string: "https://voice-feed.aisloppy.com/")!) }
     // Pairing opens Voice Feed in the browser so account approval never occurs
     // inside this native client. The one-time request expires after ten minutes.
@@ -172,23 +174,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     }
     // macOS presents its standard microphone consent dialog before capture.
     @objc func startListening() {
-        guard api.token != nil, !listening else { return }; setStatus("Requesting microphone…")
-        AVCaptureDevice.requestAccess(for: .audio) { allowed in DispatchQueue.main.async { if allowed { self.enableAndLease() } else { self.setStatus("Microphone access denied") } } }
+        guard api.token != nil, !desiredListening else { return }
+        desiredListening = true; reconnectAttempt = 0; reconnectWorkItem?.cancel(); refreshMenu(); setStatus("Requesting microphone…")
+        AVCaptureDevice.requestAccess(for: .audio) { allowed in DispatchQueue.main.async { if allowed { self.enableAndLease() } else { self.desiredListening = false; self.setStatus("Microphone access denied") } } }
     }
     // The renewable server lease prevents two devices from owning one account's
-    // microphone feed simultaneously. Failure stops capture instead of guessing.
-    func enableAndLease() { api.request("/api/device/preference", method: "PUT", json: ["enabled": true]) { result in if case .failure(let error) = result { self.setStatus(error.localizedDescription); return }; self.api.request("/api/device/lease", method: "POST", json: ["connection_id": self.connectionID]) { lease in switch lease { case .failure(let error): self.setStatus(error.localizedDescription); case .success: DispatchQueue.main.async { self.listening = true; self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.recordWindow() } } } } }
-    func renewLease() { api.request("/api/device/lease/\(connectionID)", method: "PUT") { result in if case .failure(let error) = result { DispatchQueue.main.async { self.stopLocal(); self.setStatus(error.localizedDescription) } } } }
+    // microphone feed simultaneously. Transient server and network failures
+    // stop local capture, then reacquire the lease with bounded backoff.
+    func enableAndLease() {
+        guard desiredListening, !listening else { return }
+        api.request("/api/device/preference", method: "PUT", json: ["enabled": true]) { result in
+            DispatchQueue.main.async {
+                guard self.desiredListening else { return }
+                if case .failure(let error) = result { self.scheduleReconnect(after: error); return }
+                self.api.request("/api/device/lease", method: "POST", json: ["connection_id": self.connectionID]) { lease in
+                    DispatchQueue.main.async {
+                        guard self.desiredListening else { return }
+                        switch lease {
+                        case .failure(let error): self.scheduleReconnect(after: error)
+                        case .success:
+                            self.reconnectWorkItem?.cancel(); self.reconnectWorkItem = nil; self.reconnectAttempt = 0; self.listening = true
+                            self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.recordWindow()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    func renewLease() {
+        guard desiredListening, listening, !leaseRenewalInFlight else { return }
+        leaseRenewalInFlight = true
+        api.request("/api/device/lease/\(connectionID)", method: "PUT") { result in
+            DispatchQueue.main.async {
+                self.leaseRenewalInFlight = false
+                if case .failure(let error) = result { self.scheduleReconnect(after: error) }
+            }
+        }
+    }
+    func scheduleReconnect(after error: Error) {
+        guard desiredListening else { return }
+        let failure = error as NSError
+        if failure.domain == "VoiceFeed" && [401, 403, 410, 422].contains(failure.code) {
+            desiredListening = false; stopCapture(); setStatus(error.localizedDescription); return
+        }
+        stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt += 1
+        let delay = min(pow(2.0, Double(reconnectAttempt - 1)), 30.0)
+        setStatus("Connection interrupted. Retrying in \(Int(delay))s…")
+        let work = DispatchWorkItem { [weak self] in self?.enableAndLease() }
+        reconnectWorkItem = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     // Record a compact AAC window and sample its local power meter. Windows that
     // never cross the speech threshold are deleted without leaving the Mac.
     func recordWindow() {
         guard listening else { return }; let file = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]
-        do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > -30 { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > 0.55 { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + 12) { self.finishWindow(file, recordingID: activeID) } } catch { setStatus(error.localizedDescription); stopLocal() }
+        do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > -30 { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > 0.55 { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + 12) { self.finishWindow(file, recordingID: activeID) } } catch { desiredListening = false; setStatus(error.localizedDescription); stopCapture() }
     }
     func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech; recorder = nil; if send { api.upload(file, connectionID: connectionID) { result in if case .failure(let error) = result { self.setStatus(error.localizedDescription) } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
-    @objc func stopListening() { stopLocal(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
-    func stopLocal() { listening = false; recorder?.stop(); recorder = nil; leaseTimer?.invalidate(); recordTimer?.invalidate(); leaseTimer = nil; recordTimer = nil; refreshMenu() }
+    @objc func stopListening() { desiredListening = false; reconnectAttempt = 0; reconnectWorkItem?.cancel(); reconnectWorkItem = nil; stopCapture(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
+    func stopCapture() { listening = false; recordingID += 1; let file = recorder?.url; recorder?.stop(); recorder = nil; if let file { try? FileManager.default.removeItem(at: file) }; leaseTimer?.invalidate(); recordTimer?.invalidate(); leaseTimer = nil; recordTimer = nil; refreshMenu() }
     @objc func quit() { stopListening(); NSApplication.shared.terminate(nil) }
 }
 
