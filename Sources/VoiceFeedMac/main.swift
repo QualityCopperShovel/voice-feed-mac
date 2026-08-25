@@ -2,8 +2,13 @@ import AppKit
 import AVFoundation
 import Security
 
+// Voice Feed is a menu-bar-only microphone client. It records five-second
+// windows, discards local silence, uploads speech over HTTPS, and immediately
+// deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
 
+// Capture credentials are kept in the user's macOS Keychain rather than a
+// preferences file. The token is scoped by the server to microphone capture.
 final class Keychain {
     private let service = "com.aisloppy.voice-feed"
     func load() -> String? {
@@ -22,6 +27,8 @@ final class Keychain {
     func delete() { SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary) }
 }
 
+// All server traffic uses an ephemeral URLSession, explicit deadlines, and the
+// one fixed Voice Feed origin above. The session does not retain a URL cache.
 final class API {
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 40; return URLSession(configuration: config) }()
     var token: String?
@@ -37,6 +44,8 @@ final class API {
             completion(.success(object))
         }.resume()
     }
+    // Audio is sent as one multipart request. The defer block removes the local
+    // recording after every terminal network result, including server errors.
     func upload(_ file: URL, connectionID: String, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let audio = try? Data(contentsOf: file) else { completion(.failure(NSError(domain: "VoiceFeed", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read recording."]))); return }
         let boundary = UUID().uuidString
@@ -52,6 +61,8 @@ final class API {
     }
 }
 
+// AppDelegate owns the menu-bar UI, account pairing, exclusive capture lease,
+// microphone permission, and the bounded recording loop.
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false
@@ -66,6 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     func setStatus(_ text: String) { DispatchQueue.main.async { self.status.title = text; self.refreshMenu() } }
     func refreshMenu() { connect.isHidden = api.token != nil; start.isHidden = api.token == nil || listening; stop.isHidden = !listening }
     @objc func openDevices() { NSWorkspace.shared.open(URL(string: "https://voice-feed.aisloppy.com/")!) }
+    // Pairing opens Voice Feed in the browser so account approval never occurs
+    // inside this native client. The one-time request expires after ten minutes.
     @objc func connectDevice() {
         setStatus("Creating secure connection…"); api.request("/api/devices/start", method: "POST", json: ["device_name": Host.current().localizedName ?? "Mac"]) { result in
             switch result { case .failure(let error): self.setStatus(error.localizedDescription)
@@ -79,12 +92,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
             case .success(let data): let state = data["status"] as? String ?? ""; if state == "connected", let token = data["capture_token"] as? String { self.keychain.save(token); self.api.token = token; self.setStatus("Connected"); DispatchQueue.main.async { self.startListening() } } else if state == "pending" || state == "approved" { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.poll(id: id, secret: secret, deadline: deadline) } } else { self.setStatus("Connection \(state)") } }
         }
     }
+    // macOS presents its standard microphone consent dialog before capture.
     @objc func startListening() {
         guard api.token != nil, !listening else { return }; setStatus("Requesting microphone…")
         AVCaptureDevice.requestAccess(for: .audio) { allowed in DispatchQueue.main.async { if allowed { self.enableAndLease() } else { self.setStatus("Microphone access denied") } } }
     }
+    // The renewable server lease prevents two devices from owning one account's
+    // microphone feed simultaneously. Failure stops capture instead of guessing.
     func enableAndLease() { api.request("/api/device/preference", method: "PUT", json: ["enabled": true]) { result in if case .failure(let error) = result { self.setStatus(error.localizedDescription); return }; self.api.request("/api/device/lease", method: "POST", json: ["connection_id": self.connectionID]) { lease in switch lease { case .failure(let error): self.setStatus(error.localizedDescription); case .success: DispatchQueue.main.async { self.listening = true; self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.recordWindow() } } } } }
     func renewLease() { api.request("/api/device/lease/\(connectionID)", method: "PUT") { result in if case .failure(let error) = result { DispatchQueue.main.async { self.stopLocal(); self.setStatus(error.localizedDescription) } } } }
+    // Record a compact AAC window and sample its local power meter. Windows that
+    // never cross the speech threshold are deleted without leaving the Mac.
     func recordWindow() {
         guard listening else { return }; let file = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]
@@ -96,6 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     @objc func quit() { stopListening(); NSApplication.shared.terminate(nil) }
 }
 
+// LSUIElement in Info.plist keeps this process out of the Dock; AppKit still
+// supplies the menu-bar item and a normal application lifecycle.
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
