@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.0"
+let clientVersion = "1.2.1"
 
 // Updates are announced by Voice Feed's own HTTPS origin. The installer is
 // accepted only when its SHA-256 matches that manifest, then runs with a
@@ -108,7 +108,7 @@ final class API {
 
 // AppDelegate owns the menu-bar UI, account pairing, exclusive capture lease,
 // microphone permission, and the bounded recording loop.
-final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, recordingID = 0, windowStartedAt = Date(), lastSpeechAt = Date()
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: "")
