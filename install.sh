@@ -39,6 +39,7 @@ PLIST="$HOME/Library/LaunchAgents/com.aisloppy.voice-feed.plist"
 /usr/libexec/PlistBuddy -c "Add :KeepAlive bool false" "$PLIST"
 chmod 644 "$PLIST"
 
-# Launch the installed bundle now; account connection continues in its menu.
-open "$APP_DIR"
+# Manual installs launch immediately. The in-app updater relaunches only after
+# this process exits, so macOS cannot reuse the old running executable.
+if [[ "${VOICE_FEED_AUTO_UPDATE:-0}" != "1" ]]; then open "$APP_DIR"; fi
 echo "Voice Feed is installed. Use its waveform icon in the menu bar to connect this Mac."

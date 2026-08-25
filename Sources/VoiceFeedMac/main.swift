@@ -1,11 +1,56 @@
 import AppKit
 import AVFoundation
+import CryptoKit
 import Security
 
 // Voice Feed is a menu-bar-only microphone client. It records speech-shaped
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
+let clientVersion = "1.2.0"
+
+// Updates are announced by Voice Feed's own HTTPS origin. The installer is
+// accepted only when its SHA-256 matches that manifest, then runs with a
+// five-minute deadline and relaunches the app without replacing Keychain data.
+final class AutoUpdater {
+    struct Manifest: Decodable { let version: String; let installer_url: String; let installer_sha256: String }
+    private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 45; return URLSession(configuration: config) }()
+    private let status: (String) -> Void
+    init(status: @escaping (String) -> Void) { self.status = status }
+    func start() { check(); Timer.scheduledTimer(withTimeInterval: 21600, repeats: true) { [weak self] _ in self?.check() } }
+    private func isNewer(_ candidate: String) -> Bool {
+        let left = candidate.split(separator: ".").map { Int($0) ?? 0 }, right = clientVersion.split(separator: ".").map { Int($0) ?? 0 }
+        for index in 0..<max(left.count, right.count) { let a = index < left.count ? left[index] : 0, b = index < right.count ? right[index] : 0; if a != b { return a > b } }
+        return false
+    }
+    func check() {
+        var request = URLRequest(url: URL(string: "/client-version.json", relativeTo: baseURL)!); request.timeoutInterval = 15
+        session.dataTask(with: request) { data, response, error in
+            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data), self.isNewer(manifest.version), let installerURL = URL(string: manifest.installer_url) else { return }
+            var installerRequest = URLRequest(url: installerURL); installerRequest.timeoutInterval = 30
+            self.session.dataTask(with: installerRequest) { payload, installerResponse, installerError in
+                guard installerError == nil, (installerResponse as? HTTPURLResponse)?.statusCode == 200, let payload else { self.status("Update download failed"); return }
+                let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+                guard digest == manifest.installer_sha256.lowercased() else { self.status("Update verification failed"); return }
+                let script = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-update-\(UUID().uuidString).sh")
+                do { try payload.write(to: script, options: .atomic); self.install(script) } catch { self.status("Update could not be saved") }
+            }.resume()
+        }.resume()
+    }
+    private func install(_ script: URL) {
+        DispatchQueue.main.async { self.status("Installing Voice Feed update…") }
+        let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash"); process.arguments = [script.path]
+        var environment = ProcessInfo.processInfo.environment; environment["VOICE_FEED_AUTO_UPDATE"] = "1"; process.environment = environment
+        let deadline = DispatchWorkItem { if process.isRunning { process.terminate(); self.status("Update timed out") } }
+        process.terminationHandler = { completed in
+            deadline.cancel(); try? FileManager.default.removeItem(at: script)
+            guard completed.terminationStatus == 0 else { self.status("Update failed"); return }
+            let relaunch = Process(); relaunch.executableURL = URL(fileURLWithPath: "/bin/sh"); relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"$HOME/Applications/Voice Feed.app\""]
+            try? relaunch.run(); DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
+        do { try process.run(); DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: deadline) } catch { try? FileManager.default.removeItem(at: script); status("Update could not start") }
+    }
+}
 
 // Capture credentials are kept in the user's macOS Keychain rather than a
 // preferences file. The token is scoped by the server to microphone capture.
@@ -67,12 +112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, recordingID = 0, windowStartedAt = Date(), lastSpeechAt = Date()
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: "")
+    lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voice Feed")
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [connect, start, stop, devices, quitItem].forEach { $0.target = self }
         let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, quitItem].forEach(menu.addItem); statusItem.menu = menu
         api.token = keychain.load(); refreshMenu()
+        updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
         else { DispatchQueue.main.async { self.showFirstRunGuide() } }
     }
