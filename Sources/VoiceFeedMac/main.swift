@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.6"
+let clientVersion = "1.2.7"
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -108,12 +108,14 @@ final class API {
     }
     // Audio is sent as one multipart request. The defer block removes the local
     // recording after every terminal network result, including server errors.
-    func upload(_ file: URL, connectionID: String, completion: @escaping (Result<Void, Error>) -> Void) {
+    func upload(_ file: URL, connectionID: String, capturedAt: Date, completedAt: Date, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let audio = try? Data(contentsOf: file) else { completion(.failure(NSError(domain: "VoiceFeed", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read recording."]))); return }
         let boundary = UUID().uuidString
         var body = Data(); body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n".data(using: .utf8)!); body.append(audio); body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         var request = URLRequest(url: URL(string: "/api/device/transcribe", relativeTo: baseURL)!); request.httpMethod = "POST"; request.timeoutInterval = 40; request.httpBody = body
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type"); request.setValue("Bearer \(token ?? "")", forHTTPHeaderField: "Authorization"); request.setValue(connectionID, forHTTPHeaderField: "X-Voice-Connection")
+        request.setValue(String(Int64(capturedAt.timeIntervalSince1970 * 1000)), forHTTPHeaderField: "X-Voice-Capture-Started-Ms")
+        request.setValue(String(Int64(completedAt.timeIntervalSince1970 * 1000)), forHTTPHeaderField: "X-Voice-Capture-Ended-Ms")
         session.dataTask(with: request) { data, response, error in
             defer { try? FileManager.default.removeItem(at: file) }
             if let error { completion(.failure(error)); return }; let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -230,7 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]
         do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > -30 { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > 0.55 { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + 12) { self.finishWindow(file, recordingID: activeID) } } catch { desiredListening = false; setStatus(error.localizedDescription); stopCapture() }
     }
-    func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech; recorder = nil; if send { api.upload(file, connectionID: connectionID) { result in if case .failure(let error) = result { self.setStatus(error.localizedDescription) } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
+    func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech, capturedAt = windowStartedAt, completedAt = Date(); recorder = nil; if send { api.upload(file, connectionID: connectionID, capturedAt: capturedAt, completedAt: completedAt) { result in if case .failure(let error) = result { self.setStatus(error.localizedDescription) } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
     @objc func stopListening() { desiredListening = false; reconnectAttempt = 0; reconnectWorkItem?.cancel(); reconnectWorkItem = nil; stopCapture(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
     func stopCapture() { listening = false; recordingID += 1; let file = recorder?.url; recorder?.stop(); recorder = nil; if let file { try? FileManager.default.removeItem(at: file) }; leaseTimer?.invalidate(); recordTimer?.invalidate(); leaseTimer = nil; recordTimer = nil; refreshMenu() }
     @objc func quit() { stopListening(); NSApplication.shared.terminate(nil) }
