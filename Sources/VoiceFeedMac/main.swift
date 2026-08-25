@@ -7,7 +7,23 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.1"
+let clientVersion = "1.2.2"
+
+// A compact template rendering of the Voice Feed microphone-and-text mark.
+// Drawing it locally keeps the menu-bar asset crisp at native scale and lets
+// macOS tint it correctly in both light and dark appearances.
+func voiceFeedStatusImage() -> NSImage {
+    let image = NSImage(size: NSSize(width: 18, height: 18))
+    image.lockFocus()
+    NSColor.black.setFill(); NSColor.black.setStroke()
+    NSBezierPath(roundedRect: NSRect(x: 4.5, y: 6, width: 5.2, height: 9), xRadius: 2.6, yRadius: 2.6).fill()
+    let cradle = NSBezierPath(); cradle.move(to: NSPoint(x: 2.8, y: 9.2)); cradle.curve(to: NSPoint(x: 8, y: 3.8), controlPoint1: NSPoint(x: 2.8, y: 5.8), controlPoint2: NSPoint(x: 5, y: 3.8)); cradle.lineWidth = 1.5; cradle.lineCapStyle = .round; cradle.stroke()
+    NSBezierPath(roundedRect: NSRect(x: 7.25, y: 1.9, width: 1.5, height: 2.5), xRadius: 0.75, yRadius: 0.75).fill()
+    NSBezierPath(roundedRect: NSRect(x: 5.7, y: 1.4, width: 4.6, height: 1.5), xRadius: 0.75, yRadius: 0.75).fill()
+    for (x, y, width) in [(11.1, 13.2, 4.1), (11.1, 10.3, 2.8), (11.1, 7.4, 4.8), (11.1, 4.5, 3.5)] { NSBezierPath(roundedRect: NSRect(x: x, y: y, width: width, height: 1.4), xRadius: 0.7, yRadius: 0.7).fill() }
+    image.unlockFocus(); image.isTemplate = true
+    return image
+}
 
 // Updates are announced by Voice Feed's own HTTPS origin. The installer is
 // accepted only when its SHA-256 matches that manifest, then runs with a
@@ -114,7 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Voice Feed")
+        statusItem.button?.image = voiceFeedStatusImage()
+        statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [connect, start, stop, devices, quitItem].forEach { $0.target = self }
         let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, quitItem].forEach(menu.addItem); statusItem.menu = menu
