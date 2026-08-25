@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.4"
+let clientVersion = "1.2.5"
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -128,14 +128,14 @@ final class API {
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, recordingID = 0, windowStartedAt = Date(), lastSpeechAt = Date()
-    let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: "")
+    let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [connect, start, stop, devices, quitItem].forEach { $0.target = self }
-        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, version, quitItem].forEach(menu.addItem); statusItem.menu = menu
         api.token = keychain.load(); refreshMenu()
         updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
