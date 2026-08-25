@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.2"
+let clientVersion = "1.2.3"
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -32,8 +32,9 @@ final class AutoUpdater {
     struct Manifest: Decodable { let version: String; let installer_url: String; let installer_sha256: String }
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 45; return URLSession(configuration: config) }()
     private let status: (String) -> Void
+    private var timer: Timer?
     init(status: @escaping (String) -> Void) { self.status = status }
-    func start() { check(); Timer.scheduledTimer(withTimeInterval: 21600, repeats: true) { [weak self] _ in self?.check() } }
+    func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }
     private func isNewer(_ candidate: String) -> Bool {
         let left = candidate.split(separator: ".").map { Int($0) ?? 0 }, right = clientVersion.split(separator: ".").map { Int($0) ?? 0 }
         for index in 0..<max(left.count, right.count) { let a = index < left.count ? left[index] : 0, b = index < right.count ? right[index] : 0; if a != b { return a > b } }
