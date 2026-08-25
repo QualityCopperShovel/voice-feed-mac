@@ -72,7 +72,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [connect, start, stop, devices, quitItem].forEach { $0.target = self }
         let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, quitItem].forEach(menu.addItem); statusItem.menu = menu
-        api.token = keychain.load(); refreshMenu(); if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
+        api.token = keychain.load(); refreshMenu()
+        if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
+        else { DispatchQueue.main.async { self.showFirstRunGuide() } }
+    }
+    func showFirstRunGuide() {
+        guard !UserDefaults.standard.bool(forKey: "didShowConnectionGuide") else { return }
+        UserDefaults.standard.set(true, forKey: "didShowConnectionGuide")
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Voice Feed is ready"
+        alert.informativeText = "Look for the waveform icon in your menu bar. Connect this Mac once, then Voice Feed will listen automatically."
+        alert.addButton(withTitle: "Connect This Mac")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn { connectDevice() }
     }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.status.title = text; self.refreshMenu() } }
     func refreshMenu() { connect.isHidden = api.token != nil; start.isHidden = api.token == nil || listening; stop.isHidden = !listening }
