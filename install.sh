@@ -6,7 +6,7 @@ set -euo pipefail
 # Work in a disposable directory and remove it on success or failure.
 # Pin all build inputs to one reviewed client release. The outer installer may
 # be fetched from `main`, but the executable source cannot drift mid-install.
-BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/819a61602d1526f7608f0763af4b130754b2a6eb"
+BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/6a899c7a409746b521a8d79f744c58475475cee6"
 BUILD_DIR="$(mktemp -d -t voice-feed-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -28,10 +28,16 @@ mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources" "$HOME/Li
 install -m 755 "$BIN_DIR/VoiceFeedMac" "$STAGED_APP/Contents/MacOS/VoiceFeedMac"
 install -m 644 "$BUILD_DIR/Info.plist" "$STAGED_APP/Contents/Info.plist"
 
-# Ad-hoc signing is deliberately permission-free and restores reliable updates.
-# A future permission-preserving release requires a real Developer ID identity;
-# local private-key workarounds are not reliable inside a background updater.
-codesign --force --deep --sign - "$STAGED_APP"
+# Preserve macOS privacy grants when the owner's Developer ID is available.
+# Other source-build users retain the explicit ad-hoc fallback.
+DEVELOPER_IDENTITY="Developer ID Application: jesse Aldridge (7ZPTPEXGRC)"
+if security find-identity -v -p codesigning | grep -Fq "\"$DEVELOPER_IDENTITY\""; then
+  echo "Signing Voice Feed with Developer ID."
+  codesign --force --deep --sign "$DEVELOPER_IDENTITY" "$STAGED_APP"
+else
+  echo "Developer ID unavailable; using an ad-hoc signature for this local build."
+  codesign --force --deep --sign - "$STAGED_APP"
+fi
 codesign --verify --deep --strict "$STAGED_APP"
 
 # Do not touch the running installation until the replacement has compiled,
