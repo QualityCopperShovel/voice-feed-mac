@@ -370,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
             let started = realtimeStartedAt[itemID] ?? Date(); realtimeStartedAt[itemID] = started
             let sequence = (realtimeSequence[itemID] ?? 0) + 1; realtimeSequence[itemID] = sequence
             api.request("/api/device/realtime/transcript", method: "PUT", json: [
-                "connection_id": connectionID, "item_id": itemID, "text": text,
+                "item_id": itemID, "text": text,
                 "captured_at": started.timeIntervalSince1970, "sequence": sequence,
                 "completed": false,
             ]) { _ in }
@@ -380,7 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
             realtimeText.removeValue(forKey: itemID)
             let sequence = (realtimeSequence.removeValue(forKey: itemID) ?? 0) + 1
             api.request("/api/device/realtime/transcript", method: "PUT", json: [
-                "connection_id": connectionID, "item_id": itemID, "text": transcript,
+                "item_id": itemID, "text": transcript,
                 "captured_at": started.timeIntervalSince1970, "sequence": sequence,
                 "completed": true,
             ]) { result in if case .failure = result { self.setTransientStatus("Live transcript could not be published") } }
