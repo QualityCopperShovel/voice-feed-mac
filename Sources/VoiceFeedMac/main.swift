@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.9"
+let clientVersion = "1.3.1"
 let speechThresholdDB: Float = -42
 let speechTailSeconds: TimeInterval = 1.25
 let maximumWindowSeconds: TimeInterval = 30
