@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.3.3"
+let clientVersion = "1.3.4"
 let speechThresholdDB: Float = -42
 let speechTailSeconds: TimeInterval = 1.25
 let maximumWindowSeconds: TimeInterval = 30
@@ -63,14 +63,24 @@ final class AutoUpdater {
         DispatchQueue.main.async { self.status("Installing Voice Feed update…") }
         let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/bash"); process.arguments = [script.path]
         var environment = ProcessInfo.processInfo.environment; environment["VOICE_FEED_AUTO_UPDATE"] = "1"; process.environment = environment
+        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-update-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        guard let logHandle = try? FileHandle(forWritingTo: logURL) else { status("Update log could not be created"); return }
+        process.standardOutput = logHandle; process.standardError = logHandle
         let deadline = DispatchWorkItem { if process.isRunning { process.terminate(); self.status("Update timed out") } }
         process.terminationHandler = { completed in
-            deadline.cancel(); try? FileManager.default.removeItem(at: script)
-            guard completed.terminationStatus == 0 else { self.status("Update failed"); return }
+            deadline.cancel(); logHandle.closeFile(); try? FileManager.default.removeItem(at: script)
+            let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+            try? FileManager.default.removeItem(at: logURL)
+            guard completed.terminationStatus == 0 else {
+                let detail = log.split(whereSeparator: { $0.isNewline }).last.map(String.init)
+                self.status(detail.map { "Update failed: \($0)" } ?? "Update failed without a diagnostic")
+                return
+            }
             let relaunch = Process(); relaunch.executableURL = URL(fileURLWithPath: "/bin/sh"); relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"$HOME/Applications/Voice Feed.app\""]
             try? relaunch.run(); DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
         }
-        do { try process.run(); DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: deadline) } catch { try? FileManager.default.removeItem(at: script); status("Update could not start") }
+        do { try process.run(); DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: deadline) } catch { logHandle.closeFile(); try? FileManager.default.removeItem(at: logURL); try? FileManager.default.removeItem(at: script); status("Update could not start: \(error.localizedDescription)") }
     }
 }
 

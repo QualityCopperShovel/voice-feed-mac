@@ -23,9 +23,10 @@ BIN_DIR="$(xcrun swift build -c release --show-bin-path --package-path "$BUILD_D
 
 # Assemble a standard user-owned .app bundle.
 APP_DIR="$HOME/Applications/Voice Feed.app"
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$HOME/Library/LaunchAgents"
-install -m 755 "$BIN_DIR/VoiceFeedMac" "$APP_DIR/Contents/MacOS/VoiceFeedMac"
-install -m 644 "$BUILD_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
+STAGED_APP="$BUILD_DIR/Voice Feed.app"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources" "$HOME/Library/LaunchAgents"
+install -m 755 "$BIN_DIR/VoiceFeedMac" "$STAGED_APP/Contents/MacOS/VoiceFeedMac"
+install -m 644 "$BUILD_DIR/Info.plist" "$STAGED_APP/Contents/Info.plist"
 
 # Create one local code-signing identity on the first signed release and keep
 # its private key in the login keychain. Reusing this identity gives every
@@ -33,8 +34,18 @@ install -m 644 "$BUILD_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 # an update as the same app for microphone and Keychain authorization.
 SIGNING_NAME="Voice Feed Local Update Identity"
 LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
-SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" 2>/dev/null | awk -v name="$SIGNING_NAME" 'index($0, "\"" name "\"") {print $2; exit}')"
-if [[ -z "$SIGNING_IDENTITY" ]]; then
+sign_staged_app() {
+  while read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if codesign --force --deep --sign "$candidate" "$STAGED_APP"; then
+      SIGNING_IDENTITY="$candidate"
+      return 0
+    fi
+  done < <(security find-certificate -a -c "$SIGNING_NAME" -Z "$LOGIN_KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3}')
+  return 1
+}
+SIGNING_IDENTITY=""
+if ! sign_staged_app; then
   command -v openssl >/dev/null || { echo "OpenSSL is required to create the persistent Voice Feed signing identity." >&2; exit 1; }
   cat >"$BUILD_DIR/codesign.cnf" <<'EOF'
 [req]
@@ -61,11 +72,20 @@ EOF
   security import "$BUILD_DIR/codesign.p12" -k "$LOGIN_KEYCHAIN" \
     -P "$IMPORT_PASSWORD" -T /usr/bin/codesign >/dev/null
   unset IMPORT_PASSWORD
-  SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$LOGIN_KEYCHAIN" | awk -v name="$SIGNING_NAME" 'index($0, "\"" name "\"") {print $2; exit}')"
+  sign_staged_app || { echo "Voice Feed signing identity was imported but could not sign the app." >&2; exit 1; }
 fi
 [[ -n "$SIGNING_IDENTITY" ]] || { echo "Voice Feed signing identity is unavailable." >&2; exit 1; }
-codesign --force --deep --sign "$SIGNING_IDENTITY" "$APP_DIR"
-codesign --verify --deep --strict "$APP_DIR"
+codesign --verify --deep --strict "$STAGED_APP"
+
+# Do not touch the running installation until the replacement has compiled,
+# signed, and verified. Restore the prior bundle if the final move fails.
+PREVIOUS_APP="$BUILD_DIR/Voice Feed.previous.app"
+if [[ -d "$APP_DIR" ]]; then mv "$APP_DIR" "$PREVIOUS_APP"; fi
+if ! mv "$STAGED_APP" "$APP_DIR"; then
+  [[ ! -d "$PREVIOUS_APP" ]] || mv "$PREVIOUS_APP" "$APP_DIR"
+  echo "The verified Voice Feed app could not replace the previous installation." >&2
+  exit 1
+fi
 
 # Start the app at future logins by asking macOS to open the bundle normally,
 # preserving its app identity for microphone permission and Keychain access.
