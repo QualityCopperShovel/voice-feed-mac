@@ -1,0 +1,75 @@
+name: Build unsigned macOS release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release executable
+        run: xcrun swift build -c release
+      - name: Stage architecture
+        run: |
+          mkdir -p artifact
+          cp "$(xcrun swift build -c release --show-bin-path)/VoiceFeedMac" \
+            "artifact/VoiceFeedMac-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-feed-${{ matrix.arch }}
+          path: artifact/VoiceFeedMac-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: Assemble universal app
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: voice-feed-*
+          path: architectures
+          merge-multiple: true
+      - name: Assemble unsigned universal bundle
+        run: |
+          set -euo pipefail
+          app="Voice Feed.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          lipo -create \
+            architectures/VoiceFeedMac-arm64 \
+            architectures/VoiceFeedMac-x86_64 \
+            -output "$app/Contents/MacOS/VoiceFeedMac"
+          chmod 755 "$app/Contents/MacOS/VoiceFeedMac"
+          cp Info.plist "$app/Contents/Info.plist"
+          lipo -archs "$app/Contents/MacOS/VoiceFeedMac" \
+            | grep -q 'x86_64 arm64\|arm64 x86_64'
+          ditto -c -k --keepParent "$app" Voice-Feed-unsigned.zip
+          shasum -a 256 Voice-Feed-unsigned.zip > Voice-Feed-unsigned.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-feed-unsigned-universal
+          path: |
+            Voice-Feed-unsigned.zip
+            Voice-Feed-unsigned.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
