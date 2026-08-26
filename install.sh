@@ -28,69 +28,10 @@ mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources" "$HOME/Li
 install -m 755 "$BIN_DIR/VoiceFeedMac" "$STAGED_APP/Contents/MacOS/VoiceFeedMac"
 install -m 644 "$BUILD_DIR/Info.plist" "$STAGED_APP/Contents/Info.plist"
 
-# Create one local code-signing identity on the first signed release and keep
-# it in a dedicated keychain whose random password is stored user-only. This
-# avoids interactive login-keychain ACL prompts inside the background updater
-# while retaining one designated requirement across every later build.
-SIGNING_NAME="Voice Feed Local Update Identity"
-SIGNING_DIR="$HOME/Library/Application Support/Voice Feed"
-SIGNING_KEYCHAIN="$SIGNING_DIR/signing.keychain-db"
-KEYCHAIN_PASSWORD_FILE="$SIGNING_DIR/signing-keychain-password"
-mkdir -p "$SIGNING_DIR"
-chmod 700 "$SIGNING_DIR"
-if [[ ! -f "$KEYCHAIN_PASSWORD_FILE" ]]; then
-  openssl rand -hex 32 >"$KEYCHAIN_PASSWORD_FILE"
-  chmod 600 "$KEYCHAIN_PASSWORD_FILE"
-fi
-KEYCHAIN_PASSWORD="$(<"$KEYCHAIN_PASSWORD_FILE")"
-if [[ ! -f "$SIGNING_KEYCHAIN" ]]; then
-  security create-keychain -p "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
-  security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN"
-fi
-security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
-sign_staged_app() {
-  while read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    if codesign --force --deep --keychain "$SIGNING_KEYCHAIN" --sign "$candidate" "$STAGED_APP"; then
-      SIGNING_IDENTITY="$candidate"
-      return 0
-    fi
-  done < <(security find-certificate -a -c "$SIGNING_NAME" -Z "$SIGNING_KEYCHAIN" 2>/dev/null | awk '/SHA-1 hash:/{print $3}')
-  return 1
-}
-SIGNING_IDENTITY=""
-if ! sign_staged_app; then
-  command -v openssl >/dev/null || { echo "OpenSSL is required to create the persistent Voice Feed signing identity." >&2; exit 1; }
-  cat >"$BUILD_DIR/codesign.cnf" <<'EOF'
-[req]
-distinguished_name = subject
-x509_extensions = codesign
-prompt = no
-[subject]
-CN = Voice Feed Local Update Identity
-O = Voice Feed Local
-[codesign]
-basicConstraints = critical,CA:FALSE
-keyUsage = critical,digitalSignature
-extendedKeyUsage = critical,codeSigning
-subjectKeyIdentifier = hash
-authorityKeyIdentifier = keyid,issuer
-EOF
-  openssl req -new -x509 -newkey rsa:2048 -nodes -days 3650 \
-    -config "$BUILD_DIR/codesign.cnf" -keyout "$BUILD_DIR/codesign.key" \
-    -out "$BUILD_DIR/codesign.crt" >/dev/null 2>&1
-  IMPORT_PASSWORD="$(openssl rand -hex 24)"
-  openssl pkcs12 -export -name "$SIGNING_NAME" \
-    -inkey "$BUILD_DIR/codesign.key" -in "$BUILD_DIR/codesign.crt" \
-    -out "$BUILD_DIR/codesign.p12" -passout "pass:$IMPORT_PASSWORD"
-  security import "$BUILD_DIR/codesign.p12" -k "$SIGNING_KEYCHAIN" \
-    -P "$IMPORT_PASSWORD" -T /usr/bin/codesign >/dev/null
-  unset IMPORT_PASSWORD
-  security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-    -k "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN" >/dev/null
-  sign_staged_app || { echo "Voice Feed signing identity was imported but could not sign the app." >&2; exit 1; }
-fi
-[[ -n "$SIGNING_IDENTITY" ]] || { echo "Voice Feed signing identity is unavailable." >&2; exit 1; }
+# Ad-hoc signing is deliberately permission-free and restores reliable updates.
+# A future permission-preserving release requires a real Developer ID identity;
+# local private-key workarounds are not reliable inside a background updater.
+codesign --force --deep --sign - "$STAGED_APP"
 codesign --verify --deep --strict "$STAGED_APP"
 
 # Do not touch the running installation until the replacement has compiled,
