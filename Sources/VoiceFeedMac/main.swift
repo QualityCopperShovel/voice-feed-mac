@@ -131,8 +131,7 @@ final class API {
 }
 
 // Streams 24 kHz mono PCM16 frames to BrightWrapper's short-lived relay.
-// The relay owns provider credentials, metering, and the 30-minute cap; this
-// client commits a turn after a short local-silence tail.
+// The relay owns provider credentials, metering, VAD, and the 30-minute cap.
 final class RealtimeCapture: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let outputFormat = AVAudioFormat(
@@ -141,7 +140,6 @@ final class RealtimeCapture: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var socket: URLSessionWebSocketTask?
     private var stopped = false
-    private var heardSpeech = false, windowStarted = Date(), lastSpeech = Date()
     private let onEvent: ([String: Any]) -> Void
     private let onFailure: (Error) -> Void
 
@@ -180,28 +178,10 @@ final class RealtimeCapture: @unchecked Sendable {
         }
         if let conversionError { fail(conversionError); return }
         guard output.frameLength > 0, let channel = output.int16ChannelData?[0] else { return }
-        var peak: Int16 = 0
-        for index in 0..<Int(output.frameLength) {
-            let sample = channel[index] == Int16.min ? Int16.max : abs(channel[index])
-            peak = max(peak, sample)
-        }
         let audio = Data(bytes: channel, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
         guard let message = try? JSONSerialization.data(withJSONObject: [
             "type": "input_audio_buffer.append", "audio": audio.base64EncodedString(),
         ]), let text = String(data: message, encoding: .utf8) else { return }
-        socket?.send(.string(text)) { [weak self] error in if let error { self?.fail(error) } }
-        let now = Date(), speechFloor = Int16(Double(Int16.max) * pow(10, Double(speechThresholdDB) / 20))
-        if peak > speechFloor { heardSpeech = true; lastSpeech = now }
-        if heardSpeech && (now.timeIntervalSince(lastSpeech) > speechTailSeconds
-                           || now.timeIntervalSince(windowStarted) > maximumWindowSeconds) {
-            commitTurn(); heardSpeech = false; windowStarted = now; lastSpeech = now
-        }
-    }
-
-    private func commitTurn() {
-        guard let data = try? JSONSerialization.data(withJSONObject: [
-            "type": "input_audio_buffer.commit",
-        ]), let text = String(data: data, encoding: .utf8) else { return }
         socket?.send(.string(text)) { [weak self] error in if let error { self?.fail(error) } }
     }
 
