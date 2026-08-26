@@ -7,7 +7,10 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.7"
+let clientVersion = "1.2.8"
+let speechThresholdDB: Float = -42
+let speechTailSeconds: TimeInterval = 1.25
+let maximumWindowSeconds: TimeInterval = 30
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -225,12 +228,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         let work = DispatchWorkItem { [weak self] in self?.enableAndLease() }
         reconnectWorkItem = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
-    // Record a compact AAC window and sample its local power meter. Windows that
-    // never cross the speech threshold are deleted without leaving the Mac.
+    // Keep a generous tail after the last detected speech so quiet final words
+    // and sentence endings are not clipped. A longer safety ceiling only splits
+    // genuinely continuous speech; silent windows are still deleted locally.
     func recordWindow() {
         guard listening else { return }; let file = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]
-        do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > -30 { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > 0.55 { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + 12) { self.finishWindow(file, recordingID: activeID) } } catch { desiredListening = false; setStatus(error.localizedDescription); stopCapture() }
+        do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > speechThresholdDB { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > speechTailSeconds { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + maximumWindowSeconds) { self.finishWindow(file, recordingID: activeID) } } catch { desiredListening = false; setStatus(error.localizedDescription); stopCapture() }
     }
     func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech, capturedAt = windowStartedAt, completedAt = Date(); recorder = nil; if send { api.upload(file, connectionID: connectionID, capturedAt: capturedAt, completedAt: completedAt) { result in switch result { case .failure: self.setStatus("Transcription temporarily failed. Still listening…"); case .success: self.setStatus("Listening") } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
     @objc func stopListening() { desiredListening = false; reconnectAttempt = 0; reconnectWorkItem?.cancel(); reconnectWorkItem = nil; stopCapture(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
