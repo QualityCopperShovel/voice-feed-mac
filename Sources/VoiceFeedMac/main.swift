@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.3.4"
+let clientVersion = "1.3.5"
 let speechThresholdDB: Float = -42
 let speechTailSeconds: TimeInterval = 1.25
 let maximumWindowSeconds: TimeInterval = 30
@@ -149,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     var windowStartedAt = Date(), lastSpeechAt = Date(), speechReportedAt = Date.distantPast
     var speechActive = false
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
-    lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
+    lazy var updater = AutoUpdater { [weak self] message in self?.setUpdateStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
@@ -175,9 +175,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     }
     func applyStatus(_ text: String) { statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text) } }
+    func setUpdateStatus(_ text: String) { DispatchQueue.main.async {
+        self.applyStatus(text)
+        if text.hasPrefix("Checking") || text.hasPrefix("Installing") {
+            self.update.title = text; self.update.isEnabled = false
+        } else if text.lowercased().contains("failed") || text.lowercased().contains("could not") {
+            self.update.title = "Update failed — click to retry"; self.update.isEnabled = true
+        } else {
+            self.update.title = text; self.update.isEnabled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                if self.update.title == text { self.update.title = "Check for updates" }
+            }
+        }
+    } }
     func setTransientStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text); let revision = self.statusRevision; DispatchQueue.main.asyncAfter(deadline: .now() + 8) { if revision == self.statusRevision && self.desiredListening { self.applyStatus("Listening") } } } }
     @objc func dismissStatus() { setStatus(desiredListening ? "Listening" : "Paused") }
-    @objc func checkForUpdates() { setStatus("Checking for update…"); updater.check(announce: true) }
+    @objc func checkForUpdates() { setUpdateStatus("Checking for update…"); updater.check(announce: true) }
     func refreshMenu() { connect.isHidden = api.token != nil; start.isHidden = api.token == nil || desiredListening; stop.isHidden = !desiredListening }
     @objc func openDevices() { NSWorkspace.shared.open(URL(string: "https://voice-feed.aisloppy.com/")!) }
     // Pairing opens Voice Feed in the browser so account approval never occurs
