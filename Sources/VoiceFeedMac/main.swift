@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.3.7"
+let clientVersion = "1.3.8"
 let speechThresholdDB: Float = -42
 let speechTailSeconds: TimeInterval = 1.25
 let maximumWindowSeconds: TimeInterval = 30
@@ -145,7 +145,7 @@ final class API {
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
-    var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, desiredListening = false, leaseRenewalInFlight = false, reconnectAttempt = 0, recordingID = 0, uploadID = 0, latestUploadResultID = 0, statusRevision = 0
+    var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, desiredListening = false, leaseRenewalInFlight = false, hasEstablishedLease = false, reconnectAttempt = 0, recordingID = 0, uploadID = 0, latestUploadResultID = 0, statusRevision = 0
     var windowStartedAt = Date(), lastSpeechAt = Date(), speechReportedAt = Date.distantPast
     var speechActive = false
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
@@ -229,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
                         switch lease {
                         case .failure(let error): self.scheduleReconnect(after: error)
                         case .success:
-                            self.reconnectWorkItem?.cancel(); self.reconnectWorkItem = nil; self.reconnectAttempt = 0; self.listening = true
+                            self.reconnectWorkItem?.cancel(); self.reconnectWorkItem = nil; self.reconnectAttempt = 0; self.listening = true; self.hasEstablishedLease = true
                             self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.recordWindow()
                         }
                     }
@@ -255,7 +255,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         }
         stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt += 1
         let delay = min(pow(2.0, Double(reconnectAttempt - 1)), 30.0)
-        setStatus("Connection interrupted. Retrying in \(Int(delay))s…")
+        if hasEstablishedLease {
+            setStatus("Connection interrupted. Retrying in \(Int(delay))s…")
+        } else if reconnectAttempt <= 2 {
+            setStatus("Connecting… retrying in \(Int(delay))s")
+        } else {
+            setStatus("Connection unavailable. Retrying in \(Int(delay))s…")
+        }
         let work = DispatchWorkItem { [weak self] in self?.enableAndLease() }
         reconnectWorkItem = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
