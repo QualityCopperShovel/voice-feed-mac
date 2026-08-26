@@ -28,3 +28,25 @@ xcrun swift build -c release
 ```
 
 Requires macOS 13 or later and Apple’s Swift command-line tools.
+
+## Signed release
+
+The Account Holder first stores Apple notarization credentials in the login
+Keychain under the profile `voice-feed-notary`:
+
+```bash
+xcrun notarytool store-credentials voice-feed-notary \
+  --apple-id YOUR_APPLE_ACCOUNT_EMAIL \
+  --team-id 7ZPTPEXGRC
+```
+
+Enter an app-specific Apple Account password when prompted. Then produce the
+portable release without exporting the Developer ID private key:
+
+```bash
+./release.sh
+```
+
+The script signs with hardened runtime, submits with a 15-minute deadline,
+staples Apple's notarization ticket, verifies Gatekeeper acceptance, and writes
+the distributable ZIP plus its SHA-256 digest under `dist/`.
