@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.9"
+let clientVersion = "1.3.0"
 let speechThresholdDB: Float = -42
 let speechTailSeconds: TimeInterval = 1.25
 let maximumWindowSeconds: TimeInterval = 30
@@ -130,13 +130,97 @@ final class API {
     }
 }
 
+// Streams 24 kHz mono PCM16 frames to BrightWrapper's short-lived relay.
+// The relay owns provider credentials, metering, VAD, and the 30-minute cap.
+final class RealtimeCapture: @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private let outputFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16, sampleRate: 24000,
+        channels: 1, interleaved: true)!
+    private var converter: AVAudioConverter?
+    private var socket: URLSessionWebSocketTask?
+    private var stopped = false
+    private let onEvent: ([String: Any]) -> Void
+    private let onFailure: (Error) -> Void
+
+    init(onEvent: @escaping ([String: Any]) -> Void,
+         onFailure: @escaping (Error) -> Void) {
+        self.onEvent = onEvent; self.onFailure = onFailure
+    }
+
+    func start(url: URL) throws {
+        let input = engine.inputNode, inputFormat = input.outputFormat(forBus: 0)
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            throw NSError(domain: "VoiceFeed", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Microphone format is unsupported."])
+        }
+        self.converter = converter
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 1800
+        let socket = URLSession(configuration: configuration).webSocketTask(with: url)
+        self.socket = socket; socket.resume(); receiveNext()
+        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
+            self?.send(buffer)
+        }
+        engine.prepare(); try engine.start()
+    }
+
+    private func send(_ input: AVAudioPCMBuffer) {
+        guard !stopped, let converter else { return }
+        let capacity = AVAudioFrameCount(
+            ceil(Double(input.frameLength) * outputFormat.sampleRate / input.format.sampleRate))
+        guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return }
+        var supplied = false, conversionError: NSError?
+        converter.convert(to: output, error: &conversionError) { _, status in
+            if supplied { status.pointee = .noDataNow; return nil }
+            supplied = true; status.pointee = .haveData; return input
+        }
+        if let conversionError { fail(conversionError); return }
+        guard output.frameLength > 0, let channel = output.int16ChannelData?[0] else { return }
+        let audio = Data(bytes: channel, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
+        guard let message = try? JSONSerialization.data(withJSONObject: [
+            "type": "input_audio_buffer.append", "audio": audio.base64EncodedString(),
+        ]), let text = String(data: message, encoding: .utf8) else { return }
+        socket?.send(.string(text)) { [weak self] error in if let error { self?.fail(error) } }
+    }
+
+    private func receiveNext() {
+        socket?.receive { [weak self] result in
+            guard let self, !self.stopped else { return }
+            switch result {
+            case .failure(let error): self.fail(error)
+            case .success(let message):
+                let data: Data
+                switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: self.receiveNext(); return }
+                if let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    self.onEvent(event)
+                }
+                self.receiveNext()
+            }
+        }
+    }
+
+    private func fail(_ error: Error) {
+        guard !stopped else { return }; stop(); onFailure(error)
+    }
+
+    func stop() {
+        guard !stopped else { return }; stopped = true
+        engine.inputNode.removeTap(onBus: 0); engine.stop()
+        socket?.cancel(with: .goingAway, reason: nil); socket = nil
+    }
+}
+
 // AppDelegate owns the menu-bar UI, account pairing, exclusive capture lease,
 // microphone permission, and the bounded recording loop.
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
+    var recorder: AVAudioRecorder?, realtimeCapture: RealtimeCapture?, leaseTimer: Timer?, recordTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
     var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, desiredListening = false, leaseRenewalInFlight = false, reconnectAttempt = 0, recordingID = 0, uploadID = 0, latestUploadResultID = 0, statusRevision = 0
     var windowStartedAt = Date(), lastSpeechAt = Date()
+    var realtimeText: [String: String] = [:], realtimeStartedAt: [String: Date] = [:]
+    var realtimeSequence: [String: Int] = [:]
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -206,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
                         case .failure(let error): self.scheduleReconnect(after: error)
                         case .success:
                             self.reconnectWorkItem?.cancel(); self.reconnectWorkItem = nil; self.reconnectAttempt = 0; self.listening = true
-                            self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.recordWindow()
+                            self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.startRealtimeOrFallback()
                         }
                     }
                 }
@@ -235,6 +319,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         let work = DispatchWorkItem { [weak self] in self?.enableAndLease() }
         reconnectWorkItem = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
+    func startRealtimeOrFallback() {
+        api.request("/api/device/realtime/session", method: "POST", json: ["connection_id": connectionID]) { result in
+            DispatchQueue.main.async {
+                guard self.listening, self.desiredListening else { return }
+                switch result {
+                case .failure:
+                    self.setTransientStatus("Realtime unavailable; using buffered transcription")
+                    self.recordWindow()
+                case .success(let data):
+                    guard let urlText = data["ws_url"] as? String, let url = URL(string: urlText) else {
+                        self.recordWindow(); return
+                    }
+                    let capture = RealtimeCapture(
+                        onEvent: { [weak self] event in self?.handleRealtimeEvent(event) },
+                        onFailure: { [weak self] _ in DispatchQueue.main.async { self?.realtimeFailed() } })
+                    do { try capture.start(url: url); self.realtimeCapture = capture; self.setStatus("Listening live") }
+                    catch { self.setTransientStatus("Realtime capture failed; using buffer"); self.recordWindow() }
+                }
+            }
+        }
+    }
+    func handleRealtimeEvent(_ event: [String: Any]) {
+        guard let type = event["type"] as? String,
+              let itemID = event["item_id"] as? String else { return }
+        if type == "conversation.item.input_audio_transcription.delta",
+           let delta = event["delta"] as? String {
+            let text = (realtimeText[itemID] ?? "") + delta
+            realtimeText[itemID] = text
+            let started = realtimeStartedAt[itemID] ?? Date(); realtimeStartedAt[itemID] = started
+            let sequence = (realtimeSequence[itemID] ?? 0) + 1; realtimeSequence[itemID] = sequence
+            api.request("/api/device/realtime/transcript", method: "PUT", json: [
+                "item_id": itemID, "text": text,
+                "captured_at": started.timeIntervalSince1970, "sequence": sequence,
+                "completed": false,
+            ]) { _ in }
+        } else if type == "conversation.item.input_audio_transcription.completed",
+                  let transcript = event["transcript"] as? String, !transcript.isEmpty {
+            let started = realtimeStartedAt.removeValue(forKey: itemID) ?? Date()
+            realtimeText.removeValue(forKey: itemID)
+            let sequence = (realtimeSequence.removeValue(forKey: itemID) ?? 0) + 1
+            api.request("/api/device/realtime/transcript", method: "PUT", json: [
+                "item_id": itemID, "text": transcript,
+                "captured_at": started.timeIntervalSince1970, "sequence": sequence,
+                "completed": true,
+            ]) { result in if case .failure = result { self.setTransientStatus("Live transcript could not be published") } }
+        }
+    }
+    func realtimeFailed() {
+        realtimeCapture = nil
+        guard listening, desiredListening, recorder == nil else { return }
+        setTransientStatus("Live stream interrupted; using buffered transcription")
+        recordWindow()
+    }
     // Keep a generous tail after the last detected speech so quiet final words
     // and sentence endings are not clipped. A longer safety ceiling only splits
     // genuinely continuous speech; silent windows are still deleted locally.
@@ -245,7 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     }
     func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech, capturedAt = windowStartedAt, completedAt = Date(); recorder = nil; if send { uploadID += 1; let activeUploadID = uploadID; api.upload(file, connectionID: connectionID, capturedAt: capturedAt, completedAt: completedAt) { result in DispatchQueue.main.async { guard activeUploadID > self.latestUploadResultID else { return }; self.latestUploadResultID = activeUploadID; switch result { case .failure: self.setTransientStatus("Transcription temporarily failed. Still listening…"); case .success: self.setStatus("Listening") } } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
     @objc func stopListening() { desiredListening = false; reconnectAttempt = 0; reconnectWorkItem?.cancel(); reconnectWorkItem = nil; stopCapture(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
-    func stopCapture() { listening = false; recordingID += 1; let file = recorder?.url; recorder?.stop(); recorder = nil; if let file { try? FileManager.default.removeItem(at: file) }; leaseTimer?.invalidate(); recordTimer?.invalidate(); leaseTimer = nil; recordTimer = nil; refreshMenu() }
+    func stopCapture() { listening = false; recordingID += 1; realtimeCapture?.stop(); realtimeCapture = nil; realtimeText.removeAll(); realtimeStartedAt.removeAll(); realtimeSequence.removeAll(); let file = recorder?.url; recorder?.stop(); recorder = nil; if let file { try? FileManager.default.removeItem(at: file) }; leaseTimer?.invalidate(); recordTimer?.invalidate(); leaseTimer = nil; recordTimer = nil; refreshMenu() }
     @objc func quit() { stopListening(); NSApplication.shared.terminate(nil) }
 }
 
