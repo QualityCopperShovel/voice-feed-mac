@@ -7,7 +7,7 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.2.8"
+let clientVersion = "1.2.9"
 let speechThresholdDB: Float = -42
 let speechTailSeconds: TimeInterval = 1.25
 let maximumWindowSeconds: TimeInterval = 30
@@ -43,10 +43,12 @@ final class AutoUpdater {
         for index in 0..<max(left.count, right.count) { let a = index < left.count ? left[index] : 0, b = index < right.count ? right[index] : 0; if a != b { return a > b } }
         return false
     }
-    func check() {
+    func check(announce: Bool = false) {
         var request = URLRequest(url: URL(string: "/client-version.json", relativeTo: baseURL)!); request.timeoutInterval = 15
         session.dataTask(with: request) { data, response, error in
-            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data), self.isNewer(manifest.version), let installerURL = URL(string: manifest.installer_url) else { return }
+            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { if announce { self.status("Update check failed") }; return }
+            guard self.isNewer(manifest.version) else { if announce { self.status("Voice Feed is up to date") }; return }
+            guard let installerURL = URL(string: manifest.installer_url) else { if announce { self.status("Update manifest is invalid") }; return }
             var installerRequest = URLRequest(url: installerURL); installerRequest.timeoutInterval = 30
             self.session.dataTask(with: installerRequest) { payload, installerResponse, installerError in
                 guard installerError == nil, (installerResponse as? HTTPURLResponse)?.statusCode == 200, let payload else { self.status("Update download failed"); return }
@@ -133,16 +135,17 @@ final class API {
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var recorder: AVAudioRecorder?, leaseTimer: Timer?, recordTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
-    var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, desiredListening = false, leaseRenewalInFlight = false, reconnectAttempt = 0, recordingID = 0
+    var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), heardSpeech = false, listening = false, desiredListening = false, leaseRenewalInFlight = false, reconnectAttempt = 0, recordingID = 0, uploadID = 0, latestUploadResultID = 0, statusRevision = 0
     var windowStartedAt = Date(), lastSpeechAt = Date()
-    let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
+    let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setStatus(message) }
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        [connect, start, stop, devices, quitItem].forEach { $0.target = self }
-        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, version, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        [status, connect, start, stop, update, devices, quitItem].forEach { $0.target = self }
+        status.action = #selector(dismissStatus)
+        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, update, version, quitItem].forEach(menu.addItem); statusItem.menu = menu
         api.token = keychain.load(); refreshMenu()
         updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
@@ -159,7 +162,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn { connectDevice() }
     }
-    func setStatus(_ text: String) { DispatchQueue.main.async { self.status.title = text; self.refreshMenu() } }
+    func applyStatus(_ text: String) { statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
+    func setStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text) } }
+    func setTransientStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text); let revision = self.statusRevision; DispatchQueue.main.asyncAfter(deadline: .now() + 8) { if revision == self.statusRevision && self.desiredListening { self.applyStatus("Listening") } } } }
+    @objc func dismissStatus() { setStatus(desiredListening ? "Listening" : "Paused") }
+    @objc func checkForUpdates() { setStatus("Checking for update…"); updater.check(announce: true) }
     func refreshMenu() { connect.isHidden = api.token != nil; start.isHidden = api.token == nil || desiredListening; stop.isHidden = !desiredListening }
     @objc func openDevices() { NSWorkspace.shared.open(URL(string: "https://voice-feed.aisloppy.com/")!) }
     // Pairing opens Voice Feed in the browser so account approval never occurs
@@ -236,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]
         do { recordingID += 1; let activeID = recordingID; windowStartedAt = Date(); lastSpeechAt = windowStartedAt; recorder = try AVAudioRecorder(url: file, settings: settings); recorder?.isMeteringEnabled = true; recorder?.record(); heardSpeech = false; recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in self.recorder?.updateMeters(); let now = Date(); if (self.recorder?.peakPower(forChannel: 0) ?? -160) > speechThresholdDB { self.heardSpeech = true; self.lastSpeechAt = now } else if self.heardSpeech && now.timeIntervalSince(self.windowStartedAt) > 0.8 && now.timeIntervalSince(self.lastSpeechAt) > speechTailSeconds { self.finishWindow(file, recordingID: activeID) } }; DispatchQueue.main.asyncAfter(deadline: .now() + maximumWindowSeconds) { self.finishWindow(file, recordingID: activeID) } } catch { desiredListening = false; setStatus(error.localizedDescription); stopCapture() }
     }
-    func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech, capturedAt = windowStartedAt, completedAt = Date(); recorder = nil; if send { api.upload(file, connectionID: connectionID, capturedAt: capturedAt, completedAt: completedAt) { result in switch result { case .failure: self.setStatus("Transcription temporarily failed. Still listening…"); case .success: self.setStatus("Listening") } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
+    func finishWindow(_ file: URL, recordingID activeID: Int) { guard activeID == recordingID, recorder != nil else { return }; guard listening else { try? FileManager.default.removeItem(at: file); return }; recorder?.stop(); recordTimer?.invalidate(); let send = heardSpeech, capturedAt = windowStartedAt, completedAt = Date(); recorder = nil; if send { uploadID += 1; let activeUploadID = uploadID; api.upload(file, connectionID: connectionID, capturedAt: capturedAt, completedAt: completedAt) { result in DispatchQueue.main.async { guard activeUploadID > self.latestUploadResultID else { return }; self.latestUploadResultID = activeUploadID; switch result { case .failure: self.setTransientStatus("Transcription temporarily failed. Still listening…"); case .success: self.setStatus("Listening") } } } } else { try? FileManager.default.removeItem(at: file) }; recordWindow() }
     @objc func stopListening() { desiredListening = false; reconnectAttempt = 0; reconnectWorkItem?.cancel(); reconnectWorkItem = nil; stopCapture(); api.request("/api/device/lease/\(connectionID)", method: "DELETE") { _ in }; setStatus("Paused") }
     func stopCapture() { listening = false; recordingID += 1; let file = recorder?.url; recorder?.stop(); recorder = nil; if let file { try? FileManager.default.removeItem(at: file) }; leaseTimer?.invalidate(); recordTimer?.invalidate(); leaseTimer = nil; recordTimer = nil; refreshMenu() }
     @objc func quit() { stopListening(); NSApplication.shared.terminate(nil) }
