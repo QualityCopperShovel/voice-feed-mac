@@ -4,14 +4,11 @@ A small, inspectable macOS menu-bar client for [Voice Feed](https://voice-feed.a
 
 ## Install
 
-Review [`install.sh`](install.sh), then run:
-
-```bash
-curl -fsSLo ~/Downloads/voice-feed-install.sh https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/main/install.sh
-bash ~/Downloads/voice-feed-install.sh
-```
-
-The installer uses Apple’s Swift toolchain to compile on your Mac, installs `Voice Feed.app` in `~/Applications`, and adds a user LaunchAgent so it starts at login. If the command-line tools are missing, it stops and tells you to run `xcode-select --install`.
+Download the signed and Apple-notarized universal app from
+[Voice Feed](https://voice-feed.aisloppy.com/), unzip it, and move it to
+`~/Applications`. The same notarized release works on Apple silicon and Intel
+Macs. Future updates are downloaded from Voice Feed, checksum-verified, checked
+with macOS code-signing and Gatekeeper, and installed with rollback.
 
 ## Security boundary
 
