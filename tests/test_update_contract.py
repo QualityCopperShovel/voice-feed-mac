@@ -33,6 +33,18 @@ class UpdateContractTests(unittest.TestCase):
         self.assertIn('self.loudSamples >= speechStartSamples', source)
         self.assertNotIn('peakPower(forChannel: 0)', source)
 
+    def test_release_workflow_signs_notarizes_and_publishes(self):
+        workflow = (ROOT / '.github/workflows/build-release.yml').read_text()
+        self.assertIn('name: Build signed and notarized macOS release', workflow)
+        self.assertIn('APPLE_DEVELOPER_ID_P12_BASE64:', workflow)
+        self.assertIn('codesign --force --deep --options runtime --timestamp', workflow)
+        self.assertIn('timeout 1000s xcrun notarytool submit', workflow)
+        self.assertIn('timeout 180s xcrun stapler staple', workflow)
+        self.assertIn('timeout 180s spctl --assess', workflow)
+        self.assertIn('name: voice-feed-signed-notarized', workflow)
+        self.assertIn('timeout 60s gh release create', workflow)
+        self.assertNotIn('Voice-Feed-unsigned.zip', workflow)
+
 
 if __name__ == '__main__':
     unittest.main()

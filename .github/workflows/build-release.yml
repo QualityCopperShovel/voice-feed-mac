@@ -1,4 +1,4 @@
-name: Build unsigned macOS release
+name: Build signed and notarized macOS release
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -38,11 +38,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  assemble:
-    name: Assemble universal app
+  release:
+    name: Sign and notarize universal app
     needs: build
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 25
+    env:
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_PRIVATE_KEY_P8: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_P8 }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -50,9 +58,29 @@ jobs:
           pattern: voice-feed-*
           path: architectures
           merge-multiple: true
-      - name: Assemble unsigned universal bundle
+      - name: Import Developer ID certificate
+        env:
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          keychain="$RUNNER_TEMP/voice-feed-signing.keychain-db"
+          printf '%s' "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 1200 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$certificate" -k "$keychain" \
+            -P "$APPLE_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security find-identity -v -p codesigning "$keychain" \
+            | grep -F "$APPLE_SIGNING_IDENTITY"
+          rm -f "$certificate"
+      - name: Assemble, sign, and notarize universal bundle
+        run: |
+          set -euo pipefail
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)"
           app="Voice Feed.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           lipo -create \
@@ -63,13 +91,39 @@ jobs:
           cp Info.plist "$app/Contents/Info.plist"
           lipo -archs "$app/Contents/MacOS/VoiceFeedMac" \
             | grep -q 'x86_64 arm64\|arm64 x86_64'
-          ditto -c -k --keepParent "$app" Voice-Feed-unsigned.zip
-          shasum -a 256 Voice-Feed-unsigned.zip > Voice-Feed-unsigned.zip.sha256
+          codesign --force --deep --options runtime --timestamp \
+            --entitlements Entitlements.plist --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          upload="$RUNNER_TEMP/Voice-Feed-$version-notarization.zip"
+          ditto -c -k --keepParent "$app" "$upload"
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_PRIVATE_KEY_P8" > "$key"
+          timeout 1000s xcrun notarytool submit "$upload" \
+            --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" --wait --timeout 15m
+          rm -f "$key"
+          timeout 180s xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          timeout 180s spctl --assess --type execute --verbose=2 "$app"
+          mkdir -p dist
+          artifact="dist/Voice-Feed-$version.zip"
+          ditto -c -k --keepParent "$app" "$artifact"
+          shasum -a 256 "$artifact" | tee "$artifact.sha256"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+        id: package
       - uses: actions/upload-artifact@v4
         with:
-          name: voice-feed-unsigned-universal
+          name: voice-feed-signed-notarized
           path: |
-            Voice-Feed-unsigned.zip
-            Voice-Feed-unsigned.zip.sha256
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.artifact }}.sha256
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: timeout 60s gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+      - name: Delete temporary signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/voice-feed-signing.keychain-db" || true
