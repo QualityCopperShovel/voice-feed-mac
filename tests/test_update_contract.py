@@ -38,11 +38,11 @@ class UpdateContractTests(unittest.TestCase):
         self.assertIn('name: Build signed and notarized macOS release', workflow)
         self.assertIn('APPLE_DEVELOPER_ID_P12_BASE64:', workflow)
         self.assertIn('codesign --force --deep --options runtime --timestamp', workflow)
-        self.assertIn('timeout 1000s xcrun notarytool submit', workflow)
-        self.assertIn('timeout 180s xcrun stapler staple', workflow)
-        self.assertIn('timeout 180s spctl --assess', workflow)
+        self.assertIn('run_with_timeout.py 1000 xcrun notarytool submit', workflow)
+        self.assertIn('run_with_timeout.py 180 xcrun stapler staple', workflow)
+        self.assertIn('run_with_timeout.py 180 spctl --assess', workflow)
         self.assertIn('name: voice-feed-signed-notarized', workflow)
-        self.assertIn('timeout 60s gh release create', workflow)
+        self.assertIn('run_with_timeout.py 60 gh release create', workflow)
         self.assertNotIn('Voice-Feed-unsigned.zip', workflow)
 
 
