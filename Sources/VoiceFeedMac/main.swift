@@ -7,12 +7,12 @@ import Security
 // windows, discards local silence, uploads speech over HTTPS, and immediately
 // deletes each temporary recording after upload. It never reads transcripts.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.3.12"
+let clientVersion = "1.3.13"
 let speechThresholdDB: Float = -42
 let speechContinuationThresholdDB: Float = -50
 let speechStartSamples = 2
 let speechTailSeconds: TimeInterval = 1.25
-let maximumWindowSeconds: TimeInterval = 8
+let maximumWindowSeconds: TimeInterval = 3
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
