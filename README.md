@@ -47,3 +47,11 @@ portable release without exporting the Developer ID private key:
 The script signs with hardened runtime, submits with a 15-minute deadline,
 staples Apple's notarization ticket, verifies Gatekeeper acceptance, and writes
 the distributable ZIP plus its SHA-256 digest under `dist/`.
+
+## Capture diagnostics
+
+Version 1.3.14 preserves speech detection across three-second upload boundaries.
+macOS Console subsystem `com.aisloppy.voice-feed`, category `capture`, records
+window IDs, continuation decisions, duration, speech age, upload outcomes and
+stop events. It records no audio, transcript, token or account identifiers.
+These events distinguish a discarded local window from an upload failure.

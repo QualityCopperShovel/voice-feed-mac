@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class UpdateContractTests(unittest.TestCase):
     def test_notarized_archive_replaces_script_updater(self):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
-        self.assertIn('let clientVersion = "1.3.13"', source)
+        self.assertIn('let clientVersion = "1.3.14"', source)
         self.assertIn('let download_url: String', source)
         self.assertIn('let download_sha256: String', source)
         self.assertIn('guard manifest.notarized', source)
@@ -22,7 +22,7 @@ class UpdateContractTests(unittest.TestCase):
 
     def test_bundle_and_runtime_versions_match(self):
         with (ROOT / 'Info.plist').open('rb') as metadata:
-            self.assertEqual(plistlib.load(metadata)['CFBundleShortVersionString'], '1.3.13')
+            self.assertEqual(plistlib.load(metadata)['CFBundleShortVersionString'], '1.3.14')
 
     def test_capture_windows_use_sustained_average_power_and_bounded_chunks(self):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
