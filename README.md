@@ -64,3 +64,5 @@ Version 1.4.0 was withdrawn because its AppKit bootstrap was missing. Version
 1.4.1 restores the application lifecycle and tests that both native executables
 stay running after launch. An affected installation must be replaced and opened
 once because an exited helper cannot run its updater.
+
+The 1.4.2 helper streams through short pauses and suspends audio uploads after 10 seconds of quiet. The microphone stays active locally; a rolling one-second pre-roll preserves speech onset when streaming resumes. Idle heartbeats contain no audio.
