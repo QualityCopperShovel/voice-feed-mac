@@ -48,13 +48,14 @@ The script signs with hardened runtime, submits with a 15-minute deadline,
 staples Apple's notarization ticket, verifies Gatekeeper acceptance, and writes
 the distributable ZIP plus its SHA-256 digest under `dist/`.
 
-## Capture diagnostics
+## Live transcription
 
-Version 1.3.14 sends speech after 1.25 seconds of silence, with a 60-second
-safety limit for continuous speech. It preserves speech detection across that
-limit so quiet continuations are not discarded. Continuous monologues may
-therefore take up to a minute plus transcription time to appear.
-macOS Console subsystem `com.aisloppy.voice-feed`, category `capture`, records
-window IDs, continuation decisions, duration, speech age, upload outcomes and
-stop events. It records no audio, transcript, token or account identifiers.
-These events distinguish a discarded local window from an upload failure.
+Version 1.4.0 streams PCM audio continuously through Voice Feed and BrightWrapper
+using gpt-live-transcribe. Text arrives during speech; stop and quit drain the
+pending final result before releasing the microphone lease. No local recordings
+are created. A bounded queue, connection/send/heartbeat deadlines, and explicit
+failure status prevent silent audio loss during a stalled connection. Sessions
+rotate after 19 minutes through the same drain path.
+
+Provider price: $0.017 per audio minute ($1.02/hour), including submitted silence.
+BrightWrapper meters cumulative PCM duration with whole-cent rounding per session.

@@ -24,8 +24,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Test capture boundary behavior
-        run: xcrun swift test
+      - name: Test live capture contract
+        run: python3 -m unittest discover -s tests -v
       - name: Build release executable
         run: xcrun swift build -c release
       - name: Stage architecture
