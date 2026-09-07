@@ -6,17 +6,17 @@ set -euo pipefail
 # Work in a disposable directory and remove it on success or failure.
 # Pin all build inputs to one reviewed client release. The outer installer may
 # be fetched from `main`, but the executable source cannot drift mid-install.
-BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/82f79b4cd3321e9b64c4462858da0693da9f182c"
+BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/3fd33f65eee627f5562e55a2e5bdf1999c4745cf"
 BUILD_DIR="$(mktemp -d -t voice-feed-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
 # Fetch the exact Swift package, app metadata, and client source with bounded
 # connection and overall deadlines.
-mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac" "$BUILD_DIR/Sources/CaptureCore" "$BUILD_DIR/Tests/CaptureCoreTests"
+mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac"
 for FILE in Package.swift Info.plist; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
 curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/Sources/VoiceFeedMac/main.swift" -o "$BUILD_DIR/Sources/VoiceFeedMac/main.swift"
 
-for FILE in Sources/CaptureCore/SpeechContinuation.swift Tests/CaptureCoreTests/SpeechContinuationTests.swift; do
+for FILE in Sources/VoiceFeedMac/LiveCapture.swift; do
   curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"
 done
 
