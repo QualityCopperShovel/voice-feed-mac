@@ -50,7 +50,7 @@ the distributable ZIP plus its SHA-256 digest under `dist/`.
 
 ## Live transcription
 
-Version 1.4.0 streams PCM audio continuously through Voice Feed and BrightWrapper
+Version 1.4.1 streams PCM audio continuously through Voice Feed and BrightWrapper
 using gpt-live-transcribe. Text arrives during speech; stop and quit drain the
 pending final result before releasing the microphone lease. No local recordings
 are created. A bounded queue, connection/send/heartbeat deadlines, and explicit
@@ -59,3 +59,8 @@ rotate after 19 minutes through the same drain path.
 
 Provider price: $0.017 per audio minute ($1.02/hour), including submitted silence.
 BrightWrapper meters cumulative PCM duration with whole-cent rounding per session.
+
+Version 1.4.0 was withdrawn because its AppKit bootstrap was missing. Version
+1.4.1 restores the application lifecycle and tests that both native executables
+stay running after launch. An affected installation must be replaced and opened
+once because an exited helper cannot run its updater.
