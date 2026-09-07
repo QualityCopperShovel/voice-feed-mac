@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class UpdateContractTests(unittest.TestCase):
     def test_notarized_archive_replaces_script_updater(self):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
-        self.assertIn('let clientVersion = "1.4.0"', source)
+        self.assertIn('let clientVersion = "1.4.1"', source)
         self.assertIn('let download_url: String', source)
         self.assertIn('let download_sha256: String', source)
         self.assertIn('guard manifest.notarized', source)
@@ -20,9 +20,19 @@ class UpdateContractTests(unittest.TestCase):
         self.assertNotIn('installer_url', source)
         self.assertNotIn('VOICE_FEED_AUTO_UPDATE', source)
 
+    def test_application_bootstraps_appkit(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
+        bootstrap = source[source.rfind('let app = NSApplication.shared'):]
+        self.assertIn('let delegate = AppDelegate()', bootstrap)
+        self.assertIn('app.delegate = delegate', bootstrap)
+        self.assertIn('app.setActivationPolicy(.accessory)', bootstrap)
+        self.assertIn('app.run()', bootstrap)
+        workflow = (ROOT / '.github/workflows/build-release.yml').read_text()
+        self.assertIn('python3 tests/check_launch.py "$binary"', workflow)
+
     def test_bundle_and_runtime_versions_match(self):
         with (ROOT / 'Info.plist').open('rb') as metadata:
-            self.assertEqual(plistlib.load(metadata)['CFBundleShortVersionString'], '1.4.0')
+            self.assertEqual(plistlib.load(metadata)['CFBundleShortVersionString'], '1.4.1')
 
     def test_continuous_capture_is_bounded_and_drains_before_stop(self):
         source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()

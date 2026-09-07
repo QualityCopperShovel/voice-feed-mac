@@ -7,7 +7,7 @@ import OSLog
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.0"
+let clientVersion = "1.4.1"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -298,3 +298,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     @objc func quit() { quitting=true; stopListening() }
 }
+
+// LSUIElement hides the Dock icon; AppKit still needs its application run loop.
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.accessory)
+app.run()

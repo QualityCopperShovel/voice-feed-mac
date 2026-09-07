@@ -28,6 +28,10 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Build release executable
         run: xcrun swift build -c release
+      - name: Verify the application stays running
+        run: |
+          binary="$(xcrun swift build -c release --show-bin-path)/VoiceFeedMac"
+          python3 tests/check_launch.py "$binary"
       - name: Stage architecture
         run: |
           mkdir -p artifact
