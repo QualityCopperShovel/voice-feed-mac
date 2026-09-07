@@ -10,6 +10,8 @@ let package = Package(
         .executable(name: "VoiceFeedMac", targets: ["VoiceFeedMac"]),
     ],
     targets: [
-        .executableTarget(name: "VoiceFeedMac"),
+        .target(name: "CaptureCore"),
+        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore"]),
+        .testTarget(name: "CaptureCoreTests", dependencies: ["CaptureCore"]),
     ]
 )

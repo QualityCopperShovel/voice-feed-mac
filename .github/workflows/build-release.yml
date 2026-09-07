@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test live capture contract
         run: python3 -m unittest discover -s tests -v
+      - name: Test speech gating behavior
+        run: xcrun swift test
       - name: Build release executable
         run: xcrun swift build -c release
       - name: Verify the application stays running

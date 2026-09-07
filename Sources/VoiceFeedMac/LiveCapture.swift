@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import CaptureCore
 
 /// Continuous audio packets share one provider transcription context.
 final class LiveCapture: @unchecked Sendable {
@@ -14,7 +15,9 @@ final class LiveCapture: @unchecked Sendable {
     private var socket: URLSessionWebSocketTask?
     private var converter: AVAudioConverter?
     private var timer: DispatchSourceTimer?
-    private var packets: [String] = []
+    private var packets: [[String: Any]] = []
+    private var gate = SpeechGate()
+    private var lastHeartbeat = Date()
     private var sending = false
     private var sendStarted = Date()
     private var started = Date()
@@ -36,6 +39,7 @@ final class LiveCapture: @unchecked Sendable {
         self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate
         var request=URLRequest(url: URL(string: "wss://voice-feed.aisloppy.com/api/device/live")!)
         request.timeoutInterval=15
+        request.setValue("gated", forHTTPHeaderField: "X-Voice-Capture-Mode")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(connectionID, forHTTPHeaderField: "X-Voice-Connection")
         socket=session.webSocketTask(with: request)
@@ -72,11 +76,17 @@ final class LiveCapture: @unchecked Sendable {
                 return
             }
             guard pcm.frameLength > 0, let samples=pcm.int16ChannelData?[0] else { return }
-            let audio=Data(bytes:samples,count:Int(pcm.frameLength)*2).base64EncodedString()
+            let audio=Data(bytes:samples,count:Int(pcm.frameLength)*2)
             self.queue.async {
                 guard !self.terminal, self.drainStarted == nil else { return }
                 if self.packets.count >= 100 { self.failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
-                self.packets.append(audio); self.pump()
+                for event in self.gate.consume(audio) {
+                    switch event {
+                    case .audio(let data): self.packets.append(["type":"input_audio_buffer.append","audio":data.base64EncodedString()])
+                    case .pause: self.packets.append(["type":"capture.pause"])
+                    }
+                }
+                self.pump()
             }
         }
         tapped=true; engine.prepare(); try engine.start()
@@ -85,7 +95,7 @@ final class LiveCapture: @unchecked Sendable {
         guard !terminal, !sending else { return }
         let event:[String:Any]
         if !packets.isEmpty {
-            event=["type":"input_audio_buffer.append","audio":packets.removeFirst()]
+            event=packets.removeFirst()
         } else if drainStarted != nil && !stopSent {
             stopSent=true; event=["type":"stop"]
         } else { return }
@@ -157,6 +167,10 @@ final class LiveCapture: @unchecked Sendable {
         if let pingStarted,now.timeIntervalSince(pingStarted)>10 { failMessage("Live transcription disconnected"); return }
         if ready && drainStarted == nil && now.timeIntervalSince(started)>1140 {
             stop(); DispatchQueue.main.async(execute:onRotate); return
+        }
+        if ready && drainStarted == nil && now.timeIntervalSince(lastHeartbeat)>5 {
+            lastHeartbeat=now
+            packets.append(["type":"capture.heartbeat"]); pump()
         }
         if pingStarted == nil && now.timeIntervalSince(lastPing)>10 {
             lastPing=now; pingStarted=now
