@@ -15,7 +15,7 @@ let speechThresholdDB: Float = -42
 let speechContinuationThresholdDB: Float = -50
 let speechStartSamples = 2
 let speechTailSeconds: TimeInterval = 1.25
-let maximumWindowSeconds: TimeInterval = 3
+let maximumWindowSeconds: TimeInterval = 60
 
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -300,7 +300,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioRecorderDelegat
     // Average power rejects isolated ambient peaks when starting a window.
     // Once speech starts, the more sensitive peak meter and a generous tail
     // retain quiet final words. Continuous dictation is still published in
-    // bounded three-second chunks. Speech state survives those transport boundaries.
+    // pause-delimited chunks with a sixty-second safety limit. Speech state
+    // survives safety-limit boundaries.
     func recordWindow() {
         guard listening else { return }; let file = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000]

@@ -50,7 +50,10 @@ the distributable ZIP plus its SHA-256 digest under `dist/`.
 
 ## Capture diagnostics
 
-Version 1.3.14 preserves speech detection across three-second upload boundaries.
+Version 1.3.14 sends speech after 1.25 seconds of silence, with a 60-second
+safety limit for continuous speech. It preserves speech detection across that
+limit so quiet continuations are not discarded. Continuous monologues may
+therefore take up to a minute plus transcription time to appear.
 macOS Console subsystem `com.aisloppy.voice-feed`, category `capture`, records
 window IDs, continuation decisions, duration, speech age, upload outcomes and
 stop events. It records no audio, transcript, token or account identifiers.

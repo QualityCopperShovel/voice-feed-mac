@@ -29,7 +29,7 @@ class UpdateContractTests(unittest.TestCase):
         self.assertIn('let speechStartSamples = 2', source)
         self.assertIn('let speechContinuationThresholdDB: Float = -50', source)
         self.assertIn('let speechTailSeconds: TimeInterval = 1.25', source)
-        self.assertIn('let maximumWindowSeconds: TimeInterval = 3', source)
+        self.assertIn('let maximumWindowSeconds: TimeInterval = 60', source)
         self.assertIn('averagePower(forChannel: 0)', source)
         self.assertIn('peakPower(forChannel: 0)', source)
         self.assertIn('self.heardSpeech && peakLevel > speechContinuationThresholdDB', source)
