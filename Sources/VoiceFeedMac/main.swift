@@ -2,12 +2,13 @@ import AppKit
 import AVFoundation
 import CryptoKit
 import Security
+import ServiceManagement
 import OSLog
 
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.2"
+let clientVersion = "1.4.3"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -148,14 +149,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var quitting = false, rotating = false
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setUpdateStatus(message) }
+    let loginItem = NSMenuItem(title: "Open at login: checking…", action: #selector(repairLoginItem), keyEquivalent: "")
+    // The legacy installer wrote this LaunchAgent. Once macOS owns the login
+    // item, the duplicate agent is removed so one visible mechanism remains.
+    let legacyLaunchAgent = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/com.aisloppy.voice-feed.plist")
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [status, connect, start, stop, update, devices, quitItem].forEach { $0.target = self }
         status.action = #selector(dismissStatus)
-        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), devices, update, version, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        loginItem.target = self
+        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, quitItem].forEach(menu.addItem); statusItem.menu = menu
         api.token = keychain.load(); refreshMenu()
+        ensureLoginItem()
         updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
         else { DispatchQueue.main.async { self.showFirstRunGuide() } }
@@ -170,6 +177,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         alert.addButton(withTitle: "Connect This Mac")
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn { connectDevice() }
+    }
+    // Voice Feed must return after every reboot regardless of how the bundle
+    // was installed, so the app registers itself with macOS as a Login Item on
+    // each launch and reports the resulting state in its own menu.
+    func ensureLoginItem() {
+        let service = SMAppService.mainApp
+        if service.status != .enabled {
+            do { try service.register() } catch { captureLog.error("Login item registration failed: \(error.localizedDescription, privacy: .public)") }
+        }
+        if service.status == .enabled { removeLegacyLaunchAgent() }
+        refreshLoginItem()
+    }
+    func refreshLoginItem() {
+        switch SMAppService.mainApp.status {
+        case .enabled: loginItem.title = "Opens at login"
+        case .requiresApproval: loginItem.title = "Open at login needs approval — click to allow"
+        default: loginItem.title = "Open at login is off — click to enable"
+        }
+    }
+    @objc func repairLoginItem() {
+        ensureLoginItem()
+        if SMAppService.mainApp.status != .enabled { SMAppService.openSystemSettingsLoginItems() }
+    }
+    func removeLegacyLaunchAgent() {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: legacyLaunchAgent.path) else { return }
+        let bootout = Process(); bootout.executableURL = URL(fileURLWithPath: "/bin/launchctl"); bootout.arguments = ["bootout", "gui/\(getuid())/com.aisloppy.voice-feed"]
+        if (try? bootout.run()) != nil { bootout.waitUntilExit() }
+        try? manager.removeItem(at: legacyLaunchAgent)
     }
     func applyStatus(_ text: String) { statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text) } }

@@ -28,7 +28,7 @@ BIN_DIR="$(xcrun swift build -c release --show-bin-path --package-path "$BUILD_D
 # Assemble a standard user-owned .app bundle.
 APP_DIR="$HOME/Applications/Voice Feed.app"
 STAGED_APP="$BUILD_DIR/Voice Feed.app"
-mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources" "$HOME/Library/LaunchAgents"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 install -m 755 "$BIN_DIR/VoiceFeedMac" "$STAGED_APP/Contents/MacOS/VoiceFeedMac"
 install -m 644 "$BUILD_DIR/Info.plist" "$STAGED_APP/Contents/Info.plist"
 
@@ -54,18 +54,10 @@ if ! mv "$STAGED_APP" "$APP_DIR"; then
   exit 1
 fi
 
-# Start the app at future logins by asking macOS to open the bundle normally,
-# preserving its app identity for microphone permission and Keychain access.
+# The app registers itself as a macOS Login Item on every launch, so the
+# LaunchAgent written by earlier installers is retired here.
 PLIST="$HOME/Library/LaunchAgents/com.aisloppy.voice-feed.plist"
-/usr/libexec/PlistBuddy -c "Clear dict" "$PLIST" 2>/dev/null || true
-/usr/libexec/PlistBuddy -c "Add :Label string com.aisloppy.voice-feed" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :ProgramArguments array" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :ProgramArguments:0 string /usr/bin/open" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :ProgramArguments:1 string -a" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :ProgramArguments:2 string $APP_DIR" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :RunAtLoad bool true" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :KeepAlive bool false" "$PLIST"
-chmod 644 "$PLIST"
+if [[ -f "$PLIST" ]]; then launchctl bootout "gui/$(id -u)/com.aisloppy.voice-feed" 2>/dev/null || true; rm -f "$PLIST"; fi
 
 # Manual installs launch immediately. The in-app updater relaunches only after
 # this process exits, so macOS cannot reuse the old running executable.

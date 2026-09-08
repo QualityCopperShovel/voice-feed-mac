@@ -48,6 +48,15 @@ The script signs with hardened runtime, submits with a 15-minute deadline,
 staples Apple's notarization ticket, verifies Gatekeeper acceptance, and writes
 the distributable ZIP plus its SHA-256 digest under `dist/`.
 
+## Open at login
+
+On every launch the app registers itself with macOS as a Login Item through
+`SMAppService`, so it returns after a reboot or crash whichever way it was
+installed. The menu shows the current state ("Opens at login", "needs
+approval", or "off") and clicking it repairs the registration or opens System
+Settings › Login Items. Earlier installers wrote a user LaunchAgent; the app
+removes that duplicate once macOS owns the login item.
+
 ## Live transcription
 
 Version 1.4.1 streams PCM audio continuously through Voice Feed and BrightWrapper
