@@ -45,6 +45,7 @@ final class LiveCapture: @unchecked Sendable {
         socket=session.webSocketTask(with: request)
     }
     func start() {
+        MacDiagnostics.shared.record("capture_start")
         queue.async {
             self.started=Date(); self.socket?.resume(); self.receive()
             let timer=DispatchSource.makeTimerSource(queue:self.queue)
@@ -60,6 +61,7 @@ final class LiveCapture: @unchecked Sendable {
               let converter=AVAudioConverter(from:format,to:output) else {
             throw NSError(domain:"VoiceFeed",code:1,userInfo:[NSLocalizedDescriptionKey:"Microphone audio format is unavailable"])
         }
+        MacDiagnostics.shared.record("audio_format", fields: ["sample_rate": String(format.sampleRate), "channels": String(format.channelCount)])
         self.converter=converter
         input.installTap(onBus:0,bufferSize:4096,format:format) { buffer, _ in
             // Conversion consumes this tap buffer synchronously; only owned bytes leave the callback.
@@ -90,6 +92,7 @@ final class LiveCapture: @unchecked Sendable {
             }
         }
         tapped=true; engine.prepare(); try engine.start()
+        MacDiagnostics.shared.record("audio_engine_started")
     }
     private func pump() {
         guard !terminal, !sending else { return }
@@ -147,6 +150,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     func cancel() { queue.async { self.finish() } }
     private func stopEngine() {
+        MacDiagnostics.shared.record("audio_engine_stopping")
         engine.stop()
         if tapped { engine.inputNode.removeTap(onBus:0); tapped=false }
     }
@@ -157,7 +161,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     private func failMessage(_ message:String) { fail(NSError(domain:"VoiceFeed",code:3,userInfo:[NSLocalizedDescriptionKey:message])) }
     private func fail(_ error:Error) {
-        guard !terminal else { return }; finish(); DispatchQueue.main.async { self.onFailure(error) }
+        guard !terminal else { return }; MacDiagnostics.shared.failure("capture_failed", error); finish(); DispatchQueue.main.async { self.onFailure(error) }
     }
     private func checkDeadline() {
         let now=Date()

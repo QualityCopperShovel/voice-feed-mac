@@ -8,7 +8,7 @@ import OSLog
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.3"
+let clientVersion = "1.4.4"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -70,6 +70,7 @@ final class AutoUpdater {
         }
     }
     private func install(_ archive: URL) {
+        MacDiagnostics.shared.record("update_install_started")
         DispatchQueue.main.async { self.status("Installing Voice Feed update…") }
         DispatchQueue.global(qos: .userInitiated).async {
             let manager = FileManager.default
@@ -92,7 +93,7 @@ final class AutoUpdater {
                 }
                 try? manager.removeItem(at: backup)
                 let relaunch = Process(); relaunch.executableURL = URL(fileURLWithPath: "/bin/sh"); relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"$1\"", "voice-feed-relaunch", target.path]
-                try relaunch.run(); DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+                try relaunch.run(); MacDiagnostics.shared.record("update_relaunch"); DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
             } catch {
                 self.status("Update failed: \(error.localizedDescription)")
             }
@@ -153,14 +154,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     // The legacy installer wrote this LaunchAgent. Once macOS owns the login
     // item, the duplicate agent is removed so one visible mechanism remains.
     let legacyLaunchAgent = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/com.aisloppy.voice-feed.plist")
+    var diagnosticTimer: Timer?
+    func applicationWillTerminate(_ notification: Notification) { MacDiagnostics.shared.finish() }
+    @objc func openDiagnostics() { NSWorkspace.shared.open(MacDiagnostics.shared.directory) }
+    @objc func openCrashReports() {
+        NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports"))
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MacDiagnostics.shared.record("application_ready", fields: ["os": ProcessInfo.processInfo.operatingSystemVersionString])
+        diagnosticTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MacDiagnostics.shared.record("main_loop_heartbeat", fields: ["listening": String(self.listening), "desired": String(self.desiredListening)])
+        }
+        let diagnostics = NSMenuItem(title: "Open diagnostic logs…", action: #selector(openDiagnostics), keyEquivalent: "")
+        let crashReports = NSMenuItem(title: "Open macOS crash reports…", action: #selector(openCrashReports), keyEquivalent: "")
+        diagnostics.target = self; crashReports.target = self
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [status, connect, start, stop, update, devices, quitItem].forEach { $0.target = self }
         status.action = #selector(dismissStatus)
         loginItem.target = self
-        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, diagnostics, crashReports, quitItem].forEach(menu.addItem); statusItem.menu = menu
         api.token = keychain.load(); refreshMenu()
         ensureLoginItem()
         updater.start()
@@ -282,6 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
     }
     func scheduleReconnect(after error: Error) {
+        MacDiagnostics.shared.failure("capture_reconnect", error)
         guard desiredListening else { return }
         let failure = error as NSError
         if failure.domain == "VoiceFeed" && [401, 403, 410, 422].contains(failure.code) {
@@ -332,10 +348,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         live?.cancel(); live=nil; listening=false; rotating=false
         leaseTimer?.invalidate(); leaseTimer=nil; refreshMenu()
     }
-    @objc func quit() { quitting=true; stopListening() }
+    @objc func quit() { MacDiagnostics.shared.record("quit_requested"); quitting=true; stopListening() }
 }
 
 // LSUIElement hides the Dock icon; AppKit still needs its application run loop.
+MacDiagnostics.shared.record("appkit_starting")
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

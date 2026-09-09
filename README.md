@@ -75,3 +75,21 @@ stay running after launch. An affected installation must be replaced and opened
 once because an exited helper cannot run its updater.
 
 The 1.4.2 helper streams through short pauses and suspends audio uploads after 10 seconds of quiet. The microphone stays active locally; a rolling one-second pre-roll preserves speech onset when streaming resumes. Idle heartbeats contain no audio.
+
+### Crash diagnostics (1.4.4)
+
+The menu's **Open diagnostic logs…** opens `~/Library/Logs/Voice Feed`.
+`events.jsonl` and four rotated copies (512 KiB each) retain launch, audio format,
+capture, reconnect, update and quit events, with 30-second main-loop heartbeats.
+Writes are synchronized to disk. Error records include domain/code, not payloads;
+no microphone audio, transcript text, credentials or provider responses are logged.
+A remaining session marker produces `previous_unclean_exit` on the next launch.
+That means the previous run did not complete normal termination; a crash, force
+quit, power loss or shutdown interruption can all cause it. It is not a diagnosis.
+
+**Open macOS crash reports…** opens Apple's DiagnosticReports directory. A
+VoiceFeedMac `.ips`/`.crash` report there supplies the exception and crashing
+thread; the app log supplies the preceding lifecycle. Reports are kept locally,
+not automatically uploaded. If the app cannot stay open, Finder's Go to Folder
+can open either location. No custom fatal-signal handler interferes with Apple's
+crash reporter. Local log-write failures are also reported to macOS unified logs.
