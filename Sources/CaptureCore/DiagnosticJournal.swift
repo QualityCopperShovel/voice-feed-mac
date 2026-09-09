@@ -31,6 +31,21 @@ public final class DiagnosticJournal: @unchecked Sendable {
         try record("process_exiting")
         if FileManager.default.fileExists(atPath: marker.path) { try FileManager.default.removeItem(at: marker) }
     }
+    public func snapshot() throws -> [[String: String]] {
+        lock.lock(); defer { lock.unlock() }
+        var rows: [[String: String]] = []
+        for index in stride(from: copies, through: 0, by: -1) {
+            let file = index == 0 ? log : directory.appendingPathComponent("events.\(index).jsonl")
+            guard FileManager.default.fileExists(atPath: file.path) else { continue }
+            let data = try Data(contentsOf: file)
+            for line in data.split(separator: 10) {
+                if let row = try JSONSerialization.jsonObject(with: Data(line)) as? [String: String] {
+                    rows.append(DiagnosticEvidence.sanitized(row))
+                }
+            }
+        }
+        return rows
+    }
     public func record(_ event: String, fields: [String: String] = [:]) throws {
         lock.lock(); defer { lock.unlock() }
         var row = fields.mapValues { String($0.prefix(160)) }

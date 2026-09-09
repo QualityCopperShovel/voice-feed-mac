@@ -8,7 +8,7 @@ import OSLog
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.5"
+let clientVersion = "1.4.6"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -154,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     // The legacy installer wrote this LaunchAgent. Once macOS owns the login
     // item, the duplicate agent is removed so one visible mechanism remains.
     let legacyLaunchAgent = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/com.aisloppy.voice-feed.plist")
+    let diagnosticStatus = NSMenuItem(title: "Diagnostics: waiting for connection", action: nil, keyEquivalent: "")
     var diagnosticTimer: Timer?
     func applicationWillTerminate(_ notification: Notification) { MacDiagnostics.shared.finish() }
     @objc func openDiagnostics() { NSWorkspace.shared.open(MacDiagnostics.shared.directory) }
@@ -164,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         MacDiagnostics.shared.record("application_ready", fields: ["os": ProcessInfo.processInfo.operatingSystemVersionString])
         diagnosticTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
+            MacDiagnostics.shared.sync(api: self.api) { self.diagnosticStatus.title = $0 }
             MacDiagnostics.shared.record("main_loop_heartbeat", fields: ["listening": String(self.listening), "desired": String(self.desiredListening)])
         }
         let diagnostics = NSMenuItem(title: "Open diagnostic logs…", action: #selector(openDiagnostics), keyEquivalent: "")
@@ -175,8 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         [status, connect, start, stop, update, devices, quitItem].forEach { $0.target = self }
         status.action = #selector(dismissStatus)
         loginItem.target = self
-        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, diagnostics, crashReports, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
         api.token = keychain.load(); refreshMenu()
+        MacDiagnostics.shared.sync(api: api) { self.diagnosticStatus.title = $0 }
         ensureLoginItem()
         updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
