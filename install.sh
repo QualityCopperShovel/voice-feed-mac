@@ -6,7 +6,7 @@ set -euo pipefail
 # Work in a disposable directory and remove it on success or failure.
 # Pin all build inputs to one reviewed client release. The outer installer may
 # be fetched from `main`, but the executable source cannot drift mid-install.
-BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/3e4ce635a93022f23d864d901ff90fac034937fb"
+BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/76f23242749b13fb3ba9acbe1326570c64708e2f"
 BUILD_DIR="$(mktemp -d -t voice-feed-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -16,7 +16,7 @@ mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac" "$BUILD_DIR/Sources/CaptureCore" "$BU
 for FILE in Package.swift Info.plist; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
 curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/Sources/VoiceFeedMac/main.swift" -o "$BUILD_DIR/Sources/VoiceFeedMac/main.swift"
 
-for FILE in Sources/AudioSafety/AudioSafety.m Sources/AudioSafety/include/AudioSafety.h Sources/CaptureAudio/MicrophoneConverter.swift Tests/CaptureAudioTests/MicrophoneRecoveryTests.swift Sources/CaptureCore/CaptureRecovery.swift Tests/CaptureCoreTests/CaptureRecoveryTests.swift Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
+for FILE in Sources/AudioSafety/AudioSafety.m Sources/AudioSafety/include/AudioSafety.h Sources/CaptureAudio/MicrophoneConverter.swift Tests/CaptureAudioTests/MicrophoneRecoveryTests.swift Sources/CaptureCore/CaptureRecovery.swift Tests/CaptureCoreTests/CaptureRecoveryTests.swift Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Sources/CaptureCore/UpdateAdmission.swift Tests/CaptureCoreTests/UpdateAdmissionTests.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
   curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"
 done
 
