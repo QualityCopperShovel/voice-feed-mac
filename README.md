@@ -123,3 +123,9 @@ throw stacks in automatic diagnostics. Apple crash reports also retain available
 application-specific messages and exception backtraces; missing messages are
 explicit. Existing incidents are enriched rather than duplicated. Signed release
 source: 3e4ce635a93022f23d864d901ff90fac034937fb (CI 34398296964).
+
+Mac 1.4.9 stages verified updates on disk without quitting the running app.
+They take effect on the next operator-controlled launch. Repeated checks cannot
+start concurrent installs or repeatedly install an already staged version.
+The legacy 1.4.8 updater still relaunches immediately; the automatic channel stays
+on 1.4.8 during this migration to avoid imposing another interruption.

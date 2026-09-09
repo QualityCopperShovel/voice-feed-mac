@@ -20,6 +20,15 @@ class UpdateContractTests(unittest.TestCase):
         self.assertNotIn('installer_url', source)
         self.assertNotIn('VOICE_FEED_AUTO_UPDATE', source)
 
+    def test_update_cannot_end_running_capture(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
+        updater = source[source.index('final class AutoUpdater'):source.index('// Capture credentials')]
+        self.assertNotIn('NSApplication.shared.terminate', updater)
+        self.assertNotIn('/usr/bin/open', updater)
+        self.assertNotIn('stopListening', updater)
+        self.assertIn('takes effect next launch', updater)
+        self.assertIn('updates.begin()', updater)
+
     def test_application_bootstraps_appkit(self):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
         bootstrap = source[source.rfind('let app = NSApplication.shared'):]
