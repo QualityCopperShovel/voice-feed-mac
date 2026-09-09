@@ -34,7 +34,7 @@ final class MacDiagnostics: @unchecked Sendable {
         }
         worker.async {
             do {
-                let checkpoint = self.directory.appendingPathComponent("uploaded-events.json")
+                let checkpoint = self.directory.appendingPathComponent("uploaded-events-v2.json")
                 var acknowledged = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: checkpoint))) ?? []
                 let known = Set(acknowledged)
                 guard let journal = self.journal else { throw NSError(domain:"VoiceFeedDiagnostics", code:2) }
