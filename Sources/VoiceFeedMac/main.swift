@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import AVFoundation
 import CryptoKit
 import Security
@@ -9,7 +10,7 @@ import CaptureCore
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.8"
+let clientVersion = "1.4.9"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -35,26 +36,23 @@ final class AutoUpdater {
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 45; return URLSession(configuration: config) }()
     private let status: (String) -> Void
     private var timer: Timer?
+    private let updates = UpdateAdmission(currentVersion: clientVersion)
     init(status: @escaping (String) -> Void) { self.status = status }
     func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }
-    private func isNewer(_ candidate: String) -> Bool {
-        let left = candidate.split(separator: ".").map { Int($0) ?? 0 }, right = clientVersion.split(separator: ".").map { Int($0) ?? 0 }
-        for index in 0..<max(left.count, right.count) { let a = index < left.count ? left[index] : 0, b = index < right.count ? right[index] : 0; if a != b { return a > b } }
-        return false
-    }
     func check(announce: Bool = false) {
+        guard updates.begin() else { return }
         var request = URLRequest(url: URL(string: "/client-version.json", relativeTo: baseURL)!); request.timeoutInterval = 15
         session.dataTask(with: request) { data, response, error in
-            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { if announce { self.status("Update check failed") }; return }
-            guard self.isNewer(manifest.version) else { if announce { self.status("Voice Feed is up to date") }; return }
-            guard manifest.notarized, let downloadURL = URL(string: manifest.download_url), downloadURL.scheme == "https" else { self.status("Update manifest is invalid"); return }
+            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { if announce { self.status("Update check failed") }; self.updates.finish(); return }
+            guard self.updates.isNewer(manifest.version) else { if announce { self.status("Voice Feed is up to date") }; self.updates.finish(); return }
+            guard manifest.notarized, let downloadURL = URL(string: manifest.download_url), downloadURL.scheme == "https" else { self.status("Update manifest is invalid"); self.updates.finish(); return }
             var downloadRequest = URLRequest(url: downloadURL); downloadRequest.timeoutInterval = 30
             self.session.dataTask(with: downloadRequest) { payload, downloadResponse, downloadError in
-                guard downloadError == nil, (downloadResponse as? HTTPURLResponse)?.statusCode == 200, let payload else { self.status("Update download failed"); return }
+                guard downloadError == nil, (downloadResponse as? HTTPURLResponse)?.statusCode == 200, let payload else { self.status("Update download failed"); self.updates.finish(); return }
                 let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
-                guard digest == manifest.download_sha256.lowercased() else { self.status("Update verification failed"); return }
+                guard digest == manifest.download_sha256.lowercased() else { self.status("Update verification failed"); self.updates.finish(); return }
                 let archive = FileManager.default.temporaryDirectory.appendingPathComponent("voice-feed-update-\(UUID().uuidString).zip")
-                do { try payload.write(to: archive, options: .atomic); self.install(archive) } catch { self.status("Update could not be saved") }
+                do { try payload.write(to: archive, options: .atomic); self.install(archive, version: manifest.version) } catch { self.status("Update could not be saved"); self.updates.finish() }
             }.resume()
         }.resume()
     }
@@ -62,7 +60,7 @@ final class AutoUpdater {
         let process = Process(); process.executableURL = URL(fileURLWithPath: executable); process.arguments = arguments
         let output = Pipe(); process.standardOutput = output; process.standardError = output
         try process.run()
-        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        let timeout = DispatchWorkItem { if process.isRunning { kill(process.processIdentifier, SIGKILL) } }
         DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: timeout)
         process.waitUntilExit(); timeout.cancel()
         guard process.terminationStatus == 0 else {
@@ -70,22 +68,23 @@ final class AutoUpdater {
             throw NSError(domain: "VoiceFeedUpdate", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: detail ?? "Verification failed"])
         }
     }
-    private func install(_ archive: URL) {
+    private func install(_ archive: URL, version: String) {
         MacDiagnostics.shared.record("update_install_started")
         DispatchQueue.main.async { self.status("Installing Voice Feed update…") }
         DispatchQueue.global(qos: .userInitiated).async {
+            let deadline = Date().addingTimeInterval(240)
             let manager = FileManager.default
             let work = manager.temporaryDirectory.appendingPathComponent("voice-feed-update-\(UUID().uuidString)", isDirectory: true)
             let staged = work.appendingPathComponent("Voice Feed.app", isDirectory: true)
             let target = Bundle.main.bundleURL
             let backup = target.deletingLastPathComponent().appendingPathComponent("Voice Feed.previous.app", isDirectory: true)
-            defer { try? manager.removeItem(at: archive); try? manager.removeItem(at: work) }
+            defer { try? manager.removeItem(at: archive); try? manager.removeItem(at: work); self.updates.finish() }
             do {
                 try manager.createDirectory(at: work, withIntermediateDirectories: true)
-                try self.run("/usr/bin/ditto", ["-x", "-k", archive.path, work.path])
+                try self.run("/usr/bin/ditto", ["-x", "-k", archive.path, work.path], deadline: max(0, min(120, deadline.timeIntervalSinceNow)))
                 guard manager.fileExists(atPath: staged.appendingPathComponent("Contents/MacOS/VoiceFeedMac").path) else { throw NSError(domain: "VoiceFeedUpdate", code: 2, userInfo: [NSLocalizedDescriptionKey: "Downloaded app is incomplete"]) }
-                try self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", staged.path])
-                try self.run("/usr/sbin/spctl", ["--assess", "--type", "execute", staged.path])
+                try self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", staged.path], deadline: max(0, min(120, deadline.timeIntervalSinceNow)))
+                try self.run("/usr/sbin/spctl", ["--assess", "--type", "execute", staged.path], deadline: max(0, min(120, deadline.timeIntervalSinceNow)))
                 if manager.fileExists(atPath: backup.path) { try manager.removeItem(at: backup) }
                 if manager.fileExists(atPath: target.path) { try manager.moveItem(at: target, to: backup) }
                 do { try manager.moveItem(at: staged, to: target) } catch {
@@ -93,8 +92,9 @@ final class AutoUpdater {
                     throw error
                 }
                 try? manager.removeItem(at: backup)
-                let relaunch = Process(); relaunch.executableURL = URL(fileURLWithPath: "/bin/sh"); relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"$1\"", "voice-feed-relaunch", target.path]
-                try relaunch.run(); MacDiagnostics.shared.record("update_relaunch"); DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+                self.updates.installed(version)
+                MacDiagnostics.shared.record("update_staged")
+                self.status("Update installed · takes effect next launch")
             } catch {
                 self.status("Update failed: \(error.localizedDescription)")
             }
