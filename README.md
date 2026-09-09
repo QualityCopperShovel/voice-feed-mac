@@ -117,3 +117,9 @@ backoff resets only after microphone initialization succeeds.
 
 This release also replays retained diagnostics once after the server's retention
 repair, so historical heartbeat uploads cannot evict newer crash evidence.
+
+Mac 1.4.8 retains bounded, redacted Objective-C exception names, reasons and
+throw stacks in automatic diagnostics. Apple crash reports also retain available
+application-specific messages and exception backtraces; missing messages are
+explicit. Existing incidents are enriched rather than duplicated. Signed release
+source: 3e4ce635a93022f23d864d901ff90fac034937fb (CI 34398296964).

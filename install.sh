@@ -6,7 +6,7 @@ set -euo pipefail
 # Work in a disposable directory and remove it on success or failure.
 # Pin all build inputs to one reviewed client release. The outer installer may
 # be fetched from `main`, but the executable source cannot drift mid-install.
-BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/2c8cb963c8fd7db574947f4f9f4dbe61c30cc9aa"
+BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/3e4ce635a93022f23d864d901ff90fac034937fb"
 BUILD_DIR="$(mktemp -d -t voice-feed-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
