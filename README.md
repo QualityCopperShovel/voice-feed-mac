@@ -104,3 +104,16 @@ record or malformed report is reported explicitly without blocking readable rows
 No custom fatal-signal handler interferes with Apple's crash reporter. Local
 log-write failures are also reported to macOS unified logs. Logs can sync only
 while the helper is running and can reach Voice Feed.
+
+### Sleep and hardware changes (1.4.7)
+
+Capture pauses when the workspace sleeps and reacquires the microphone after
+wake without changing the saved enabled preference. Audio taps use the device's
+negotiated format; conversion follows the actual incoming buffers. A native
+AVFAudio exception becomes a recoverable capture error instead of terminating
+the helper. Old network and capture callbacks cannot restart a stopped generation.
+A microphone that produces no buffers for 30 seconds fails visibly and retries;
+backoff resets only after microphone initialization succeeds.
+
+This release also replays retained diagnostics once after the server's retention
+repair, so historical heartbeat uploads cannot evict newer crash evidence.
