@@ -11,7 +11,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "CaptureCore"),
-        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore"]),
+        .target(name: "AudioSafety", publicHeadersPath: "include"),
+        .target(name: "CaptureAudio", dependencies: ["AudioSafety"]),
+        .testTarget(name: "CaptureAudioTests", dependencies: ["CaptureAudio", "AudioSafety"]),
+        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore", "CaptureAudio", "AudioSafety"]),
         .testTarget(name: "CaptureCoreTests", dependencies: ["CaptureCore"]),
     ]
 )

@@ -4,11 +4,12 @@ import CryptoKit
 import Security
 import ServiceManagement
 import OSLog
+import CaptureCore
 
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.6"
+let clientVersion = "1.4.7"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -148,6 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var live: LiveCapture?, leaseTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
     var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), listening = false, desiredListening = false, leaseRenewalInFlight = false, hasEstablishedLease = false, reconnectAttempt = 0, statusRevision = 0
     var quitting = false, rotating = false
+    var recovery = CaptureRecovery()
+    var liveID = UUID()
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setUpdateStatus(message) }
     let loginItem = NSMenuItem(title: "Open at login: checking…", action: #selector(repairLoginItem), keyEquivalent: "")
@@ -178,6 +181,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         status.action = #selector(dismissStatus)
         loginItem.target = self
         let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector:#selector(willSleep), name:NSWorkspace.willSleepNotification, object:nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector:#selector(didWake), name:NSWorkspace.didWakeNotification, object:nil)
         api.token = keychain.load(); refreshMenu()
         MacDiagnostics.shared.sync(api: api) { self.diagnosticStatus.title = $0 }
         ensureLoginItem()
@@ -260,6 +265,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             case .success(let data): let state = data["status"] as? String ?? ""; if state == "connected", let token = data["capture_token"] as? String { self.keychain.save(token); self.api.token = token; self.setStatus("Connected"); DispatchQueue.main.async { self.startListening() } } else if state == "pending" || state == "approved" { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.poll(id: id, secret: secret, deadline: deadline) } } else { self.setStatus("Connection \(state)") } }
         }
     }
+    @objc func willSleep() {
+        recovery.sleep(); reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+        stopCapture(); setStatus("Sleeping · capture will resume after wake")
+    }
+    @objc func didWake() {
+        recovery.wake()
+        guard desiredListening else { setStatus("Paused"); return }
+        setStatus("Waking microphone…")
+        let ticket = recovery.generation
+        DispatchQueue.main.asyncAfter(deadline:.now()+2) {
+            guard self.recovery.accepts(ticket), self.desiredListening else { return }
+            self.enableAndLease()
+        }
+    }
     // macOS presents its standard microphone consent dialog before capture.
     @objc func startListening() {
         guard api.token != nil, !desiredListening else { return }
@@ -270,14 +289,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     // microphone feed simultaneously. Transient server and network failures
     // stop local capture, then reacquire the lease with bounded backoff.
     func enableAndLease() {
-        guard desiredListening, !listening else { return }
+        guard desiredListening, !listening, !recovery.sleeping else { return }
+        let ticket = recovery.generation
         api.request("/api/device/preference", method: "PUT", json: ["enabled": true]) { result in
             DispatchQueue.main.async {
-                guard self.desiredListening else { return }
+                guard self.desiredListening, self.recovery.accepts(ticket) else { return }
                 if case .failure(let error) = result { self.scheduleReconnect(after: error); return }
                 self.api.request("/api/device/lease", method: "POST", json: ["connection_id": self.connectionID]) { lease in
                     DispatchQueue.main.async {
-                        guard self.desiredListening else { return }
+                        guard self.desiredListening, self.recovery.accepts(ticket) else { return }
                         switch lease {
                         case .failure(let error): self.scheduleReconnect(after: error)
                         case .success:
@@ -292,8 +312,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func renewLease() {
         guard listening, !leaseRenewalInFlight else { return }
         leaseRenewalInFlight = true
+        let ticket = recovery.generation
         api.request("/api/device/lease/\(connectionID)", method: "PUT") { result in
             DispatchQueue.main.async {
+                guard self.recovery.accepts(ticket) else { return }
                 self.leaseRenewalInFlight = false
                 if case .failure(let error) = result { self.scheduleReconnect(after: error) }
             }
@@ -301,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     func scheduleReconnect(after error: Error) {
         MacDiagnostics.shared.failure("capture_reconnect", error)
-        guard desiredListening else { return }
+        guard desiredListening, !recovery.sleeping else { return }
         let failure = error as NSError
         if failure.domain == "VoiceFeed" && [401, 403, 410, 422].contains(failure.code) {
             desiredListening = false; stopCapture(); setStatus(error.localizedDescription); return
@@ -319,20 +341,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         reconnectWorkItem = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
     func startLiveCapture() {
-        guard let token=api.token else { return }
+        guard let token=api.token, !recovery.sleeping, desiredListening else { return }
+        let captureID = UUID(); liveID = captureID
         setStatus("Connecting live transcription…")
         live=LiveCapture(token:token,connectionID:connectionID,
-            onReady: { self.setStatus("Listening") },
+            onReady: { guard self.liveID == captureID else { return }; self.setStatus("Listening") },
             onFailure: { error in
+                guard self.liveID == captureID else { return }
                 if self.desiredListening { self.scheduleReconnect(after:error) }
                 else { self.finishStop(error:error) }
             },
             onComplete: {
+                guard self.liveID == captureID else { return }
                 if self.rotating && self.desiredListening {
                     self.rotating=false; self.live=nil; self.startLiveCapture()
                 } else { self.finishStop() }
             },
-            onRotate: { self.rotating=true; self.setStatus("Finishing words before reconnecting…") })
+            onRotate: { guard self.liveID == captureID else { return }; self.rotating=true; self.setStatus("Finishing words before reconnecting…") })
         live?.start()
     }
     @objc func stopListening() {
@@ -348,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         if quitting { NSApplication.shared.terminate(nil) }
     }
     func stopCapture() {
+        recovery.invalidate(); liveID = UUID(); leaseRenewalInFlight = false
         live?.cancel(); live=nil; listening=false; rotating=false
         leaseTimer?.invalidate(); leaseTimer=nil; refreshMenu()
     }

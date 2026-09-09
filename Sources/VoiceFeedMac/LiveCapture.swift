@@ -1,6 +1,8 @@
 import AVFoundation
 import Foundation
 import CaptureCore
+import CaptureAudio
+import AudioSafety
 
 /// Continuous audio packets share one provider transcription context.
 final class LiveCapture: @unchecked Sendable {
@@ -13,7 +15,8 @@ final class LiveCapture: @unchecked Sendable {
         return URLSession(configuration: c)
     }()
     private var socket: URLSessionWebSocketTask?
-    private var converter: AVAudioConverter?
+    private var configurationObserver: NSObjectProtocol?
+    private var lastBuffer = Date()
     private var timer: DispatchSourceTimer?
     private var packets: [[String: Any]] = []
     private var gate = SpeechGate()
@@ -54,44 +57,50 @@ final class LiveCapture: @unchecked Sendable {
         }
     }
     private func capture() throws {
-        let input=engine.inputNode
-        let format=input.outputFormat(forBus:0)
-        guard format.sampleRate > 0, format.channelCount > 0,
-              let output=AVAudioFormat(commonFormat:.pcmFormatInt16,sampleRate:24000,channels:1,interleaved:true),
-              let converter=AVAudioConverter(from:format,to:output) else {
-            throw NSError(domain:"VoiceFeed",code:1,userInfo:[NSLocalizedDescriptionKey:"Microphone audio format is unavailable"])
+        var input: AVAudioInputNode?
+        var startError: Error?
+        let converter = MicrophoneConverter()
+        let nativeError = VFAudioPerform {
+            let node = self.engine.inputNode; input = node
+            let format = node.inputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                startError = NSError(domain:"VoiceFeedAudio", code:2, userInfo:[NSLocalizedDescriptionKey:"Microphone audio format is unavailable"]); return
+            }
+            MacDiagnostics.shared.record("audio_format", fields:["sample_rate":String(format.sampleRate), "channels":String(format.channelCount)])
+            // Do not force a cached output format back onto changing hardware.
+            node.installTap(onBus:0, bufferSize:4096, format:nil) { buffer, _ in
+                do {
+                    // Consume borrowed hardware samples before the callback returns.
+                    let audio = try converter.convert(buffer)
+                    self.queue.async {
+                        guard !self.terminal, self.drainStarted == nil else { return }
+                        self.lastBuffer = Date()
+                        guard !audio.isEmpty else { return }
+                        if self.packets.count >= 100 { self.failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
+                        for event in self.gate.consume(audio) {
+                            switch event {
+                            case .audio(let data): self.packets.append(["type":"input_audio_buffer.append", "audio":data.base64EncodedString()])
+                            case .pause: self.packets.append(["type":"capture.pause"])
+                            }
+                        }
+                        self.pump()
+                    }
+                } catch { self.queue.async { self.fail(error) } }
+            }
+            self.tapped = true
+            self.engine.prepare()
+            do { try self.engine.start() } catch { startError = error }
         }
-        MacDiagnostics.shared.record("audio_format", fields: ["sample_rate": String(format.sampleRate), "channels": String(format.channelCount)])
-        self.converter=converter
-        input.installTap(onBus:0,bufferSize:4096,format:format) { buffer, _ in
-            // Conversion consumes this tap buffer synchronously; only owned bytes leave the callback.
-            let capacity=AVAudioFrameCount(Double(buffer.frameLength)*24000/format.sampleRate)+64
-            guard let pcm=AVAudioPCMBuffer(pcmFormat:output,frameCapacity:capacity) else { return }
-            var consumed=false
-            var error:NSError?
-            let result=converter.convert(to:pcm,error:&error) { _, state in
-                if consumed { state.pointee = .noDataNow; return nil }
-                consumed=true; state.pointee = .haveData; return buffer
-            }
-            if result == .error || error != nil {
-                self.queue.async { self.fail(error ?? NSError(domain:"VoiceFeed",code:2,userInfo:[NSLocalizedDescriptionKey:"Microphone audio conversion failed"])) }
-                return
-            }
-            guard pcm.frameLength > 0, let samples=pcm.int16ChannelData?[0] else { return }
-            let audio=Data(bytes:samples,count:Int(pcm.frameLength)*2)
+        if let error = (nativeError as Error?) ?? startError { throw error }
+        guard input != nil else { throw NSError(domain:"VoiceFeedAudio", code:2) }
+        lastBuffer = Date()
+        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            guard let self else { return }
             self.queue.async {
                 guard !self.terminal, self.drainStarted == nil else { return }
-                if self.packets.count >= 100 { self.failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
-                for event in self.gate.consume(audio) {
-                    switch event {
-                    case .audio(let data): self.packets.append(["type":"input_audio_buffer.append","audio":data.base64EncodedString()])
-                    case .pause: self.packets.append(["type":"capture.pause"])
-                    }
-                }
-                self.pump()
+                self.failMessage("Microphone configuration changed; reconnecting")
             }
         }
-        tapped=true; engine.prepare(); try engine.start()
         MacDiagnostics.shared.record("audio_engine_started")
     }
     private func pump() {
@@ -151,8 +160,12 @@ final class LiveCapture: @unchecked Sendable {
     func cancel() { queue.async { self.finish() } }
     private func stopEngine() {
         MacDiagnostics.shared.record("audio_engine_stopping")
-        engine.stop()
-        if tapped { engine.inputNode.removeTap(onBus:0); tapped=false }
+        if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer); configurationObserver = nil }
+        if let error = VFAudioPerform({ self.engine.stop() }) { MacDiagnostics.shared.failure("capture_failed", error) }
+        if tapped {
+            if let error = VFAudioPerform({ self.engine.inputNode.removeTap(onBus:0) }) { MacDiagnostics.shared.failure("capture_failed", error) }
+            tapped = false
+        }
     }
     private func finish() {
         guard !terminal else { return }; terminal=true
@@ -166,6 +179,7 @@ final class LiveCapture: @unchecked Sendable {
     private func checkDeadline() {
         let now=Date()
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
+        if ready && drainStarted == nil && now.timeIntervalSince(lastBuffer)>30 { failMessage("Microphone stopped producing audio for 30 seconds"); return }
         if sending && now.timeIntervalSince(sendStarted)>10 { failMessage("Audio upload timed out"); return }
         if let drainStarted,now.timeIntervalSince(drainStarted)>25 { failMessage("Final words did not finish within 25 seconds"); return }
         if let pingStarted,now.timeIntervalSince(pingStarted)>10 { failMessage("Live transcription disconnected"); return }

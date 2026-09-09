@@ -1,0 +1,32 @@
+import XCTest
+import AVFoundation
+import AudioSafety
+@testable import CaptureAudio
+
+final class MicrophoneRecoveryTests: XCTestCase {
+    func testAVFAudioExceptionBecomesAnErrorAndNextAttemptCanSucceed() {
+        let error = VFAudioPerform {
+            NSException(name: NSExceptionName("com.apple.coreaudio.avfaudio"), reason: "test hardware-format assertion", userInfo: nil).raise()
+        }
+        XCTAssertEqual(error?.domain, "VoiceFeedAudio")
+        XCTAssertEqual(error?.code, 1)
+        XCTAssertFalse(error?.localizedDescription.contains("test hardware-format assertion") ?? true)
+        var restarted = false
+        XCTAssertNil(VFAudioPerform { restarted = true })
+        XCTAssertTrue(restarted)
+    }
+    func testActualPCMConvertsAfterSleepStyleHardwareFormatChanges() throws {
+        let converter = MicrophoneConverter()
+        for (rate, channels) in [(48000.0, 2), (44100.0, 2), (48000.0, 1), (44100.0, 1)] {
+            let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: AVAudioChannelCount(channels)))
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(rate / 10)))
+            buffer.frameLength = buffer.frameCapacity
+            for channel in 0..<channels {
+                for frame in 0..<Int(buffer.frameLength) { buffer.floatChannelData![channel][frame] = Float(sin(Double(frame) * 0.1)) * 0.1 }
+            }
+            let audio = try converter.convert(buffer)
+            XCTAssertGreaterThan(audio.count, 4000); XCTAssertLessThan(audio.count, 5100)
+            XCTAssertEqual(audio.count % 2, 0)
+        }
+    }
+}

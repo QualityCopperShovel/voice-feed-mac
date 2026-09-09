@@ -12,11 +12,11 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 
 # Fetch the exact Swift package, app metadata, and client source with bounded
 # connection and overall deadlines.
-mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac" "$BUILD_DIR/Sources/CaptureCore" "$BUILD_DIR/Tests/CaptureCoreTests"
+mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac" "$BUILD_DIR/Sources/CaptureCore" "$BUILD_DIR/Tests/CaptureCoreTests" "$BUILD_DIR/Sources/AudioSafety/include" "$BUILD_DIR/Sources/CaptureAudio" "$BUILD_DIR/Tests/CaptureAudioTests"
 for FILE in Package.swift Info.plist; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
 curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/Sources/VoiceFeedMac/main.swift" -o "$BUILD_DIR/Sources/VoiceFeedMac/main.swift"
 
-for FILE in Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
+for FILE in Sources/AudioSafety/AudioSafety.m Sources/AudioSafety/include/AudioSafety.h Sources/CaptureAudio/MicrophoneConverter.swift Tests/CaptureAudioTests/MicrophoneRecoveryTests.swift Sources/CaptureCore/CaptureRecovery.swift Tests/CaptureCoreTests/CaptureRecoveryTests.swift Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
   curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"
 done
 
