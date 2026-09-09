@@ -56,8 +56,9 @@ class UpdateContractTests(unittest.TestCase):
         source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
         main = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
         self.assertIn('AVAudioEngine()', source)
-        self.assertIn('sampleRate:24000', source)
-        self.assertIn('pcmFormatInt16', source)
+        # Real PCM conversion across formats is exercised by MicrophoneRecoveryTests.
+        self.assertIn('let converter = MicrophoneConverter()', source)
+        self.assertIn('format:nil', source)
         self.assertIn('packets.count >= 100', source)
         self.assertIn('timeIntervalSince(sendStarted)>10', source)
         self.assertIn('timeIntervalSince(drainStarted)>25', source)

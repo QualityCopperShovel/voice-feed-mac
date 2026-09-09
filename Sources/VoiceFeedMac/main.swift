@@ -151,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var quitting = false, rotating = false
     var recovery = CaptureRecovery()
     var liveID = UUID()
+    var workspaceObservers: [NSObjectProtocol] = []
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), start = NSMenuItem(title: "Start listening", action: #selector(startListening), keyEquivalent: ""), stop = NSMenuItem(title: "Stop listening", action: #selector(stopListening), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
     lazy var updater = AutoUpdater { [weak self] message in self?.setUpdateStatus(message) }
     let loginItem = NSMenuItem(title: "Open at login: checking…", action: #selector(repairLoginItem), keyEquivalent: "")
@@ -181,8 +182,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         status.action = #selector(dismissStatus)
         loginItem.target = self
         let menu = NSMenu(); [status, .separator(), connect, start, stop, .separator(), loginItem, devices, update, version, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector:#selector(willSleep), name:NSWorkspace.willSleepNotification, object:nil)
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector:#selector(didWake), name:NSWorkspace.didWakeNotification, object:nil)
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification, object:nil, queue:.main) { [weak self] _ in self?.willSleep() })
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didWakeNotification, object:nil, queue:.main) { [weak self] _ in self?.didWake() })
         api.token = keychain.load(); refreshMenu()
         MacDiagnostics.shared.sync(api: api) { self.diagnosticStatus.title = $0 }
         ensureLoginItem()
@@ -265,11 +266,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             case .success(let data): let state = data["status"] as? String ?? ""; if state == "connected", let token = data["capture_token"] as? String { self.keychain.save(token); self.api.token = token; self.setStatus("Connected"); DispatchQueue.main.async { self.startListening() } } else if state == "pending" || state == "approved" { DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.poll(id: id, secret: secret, deadline: deadline) } } else { self.setStatus("Connection \(state)") } }
         }
     }
-    @objc func willSleep() {
+    func willSleep() {
+        MacDiagnostics.shared.record("device_sleep")
         recovery.sleep(); reconnectWorkItem?.cancel(); reconnectWorkItem = nil
         stopCapture(); setStatus("Sleeping · capture will resume after wake")
     }
-    @objc func didWake() {
+    func didWake() {
+        MacDiagnostics.shared.record("device_wake")
         recovery.wake()
         guard desiredListening else { setStatus("Paused"); return }
         setStatus("Waking microphone…")
