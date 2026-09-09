@@ -37,13 +37,19 @@ final class MacDiagnostics: @unchecked Sendable {
                 let checkpoint = self.directory.appendingPathComponent("uploaded-events.json")
                 var acknowledged = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: checkpoint))) ?? []
                 let known = Set(acknowledged)
-                var rows = try self.journal?.snapshot() ?? []
+                var rows = Array((try self.journal?.snapshot() ?? []).suffix(5000).reversed())
                 let reports = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports")
                 let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
                 for file in files.filter({ $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix("VoiceFeedMac") }).sorted(by: { $0.lastPathComponent > $1.lastPathComponent }).prefix(20) {
                     let values = try file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                     guard (values.fileSize ?? 0) <= 5_000_000, let modified = values.contentModificationDate, modified > Date().addingTimeInterval(-30*86400) else { continue }
-                    if let row = try DiagnosticEvidence.crash(Data(contentsOf: file)) { rows.append(row) }
+                    do {
+                        if let row = try DiagnosticEvidence.crash(Data(contentsOf: file)) { rows.insert(row, at: 0) }
+                    } catch {
+                        rows.insert(["event":"crash_report_unreadable", "session":file.deletingPathExtension().lastPathComponent,
+                                     "version":clientVersion, "timestamp":ISO8601DateFormatter().string(from: modified),
+                                     "domain":(error as NSError).domain, "code":String((error as NSError).code)], at:0)
+                    }
                 }
                 var batch: [[String: String]] = []
                 for var row in rows {
