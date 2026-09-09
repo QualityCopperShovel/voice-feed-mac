@@ -37,7 +37,8 @@ final class MacDiagnostics: @unchecked Sendable {
                 let checkpoint = self.directory.appendingPathComponent("uploaded-events.json")
                 var acknowledged = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: checkpoint))) ?? []
                 let known = Set(acknowledged)
-                var rows = Array((try self.journal?.snapshot() ?? []).suffix(5000).reversed())
+                guard let journal = self.journal else { throw NSError(domain:"VoiceFeedDiagnostics", code:2) }
+                var rows = Array(try journal.snapshot().suffix(5000).reversed())
                 let reports = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports")
                 let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
                 for file in files.filter({ $0.pathExtension == "ips" && $0.lastPathComponent.hasPrefix("VoiceFeedMac") }).sorted(by: { $0.lastPathComponent > $1.lastPathComponent }).prefix(20) {

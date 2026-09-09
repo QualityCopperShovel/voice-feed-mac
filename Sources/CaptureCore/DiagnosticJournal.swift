@@ -39,8 +39,14 @@ public final class DiagnosticJournal: @unchecked Sendable {
             guard FileManager.default.fileExists(atPath: file.path) else { continue }
             let data = try Data(contentsOf: file)
             for line in data.split(separator: 10) {
-                if let row = try JSONSerialization.jsonObject(with: Data(line)) as? [String: String] {
+                do {
+                    guard let row = try JSONSerialization.jsonObject(with: Data(line)) as? [String: String] else { throw CocoaError(.coderReadCorrupt) }
                     rows.append(DiagnosticEvidence.sanitized(row))
+                } catch {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+                    let modified = attributes[.modificationDate] as? Date ?? Date(timeIntervalSince1970: 0)
+                    rows.append(["event":"journal_record_unreadable", "session":"journal", "version":version,
+                                 "timestamp":ISO8601DateFormatter().string(from:modified), "code":String((error as NSError).code)])
                 }
             }
         }

@@ -18,6 +18,17 @@ final class DiagnosticEvidenceTests: XCTestCase {
         XCTAssertTrue(row["frames"]!.contains("LiveCapture.capture"))
         XCTAssertFalse(String(describing:row).contains("private"))
     }
+    func testTruncatedCrashTimeJournalDoesNotBlockEarlierEvidence() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:dir) }
+        let journal = try DiagnosticJournal(directory:dir,version:"1.4.6")
+        try journal.begin(); try journal.record("capture_failed")
+        let handle = try FileHandle(forWritingTo:dir.appendingPathComponent("events.jsonl"))
+        try handle.seekToEnd(); try handle.write(contentsOf:Data("{broken".utf8)); try handle.close()
+        let rows = try journal.snapshot()
+        XCTAssertTrue(rows.contains { $0["event"] == "capture_failed" })
+        XCTAssertTrue(rows.contains { $0["event"] == "journal_record_unreadable" })
+    }
     func testJournalSnapshotIncludesEarlierRunsAndRotations() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:dir) }
