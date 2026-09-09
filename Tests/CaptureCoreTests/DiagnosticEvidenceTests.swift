@@ -29,6 +29,32 @@ final class DiagnosticEvidenceTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0["event"] == "capture_failed" })
         XCTAssertTrue(rows.contains { $0["event"] == "journal_record_unreadable" })
     }
+    func testLongAssertionSurvivesJournalAndSensitiveValuesAreRedacted() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:dir) }
+        let journal = try DiagnosticJournal(directory:dir,version:"1.4.8")
+        let reason = String(repeating:"hardware format mismatch; ",count:20) + "vf_capture_secret /Users/private/device https://private.example/a token=secret person@example.com"
+        try journal.record("capture_failed", fields:["exception_name":"com.apple.coreaudio.avfaudio", "exception_reason":reason])
+        let row = try XCTUnwrap(journal.snapshot().first)
+        XCTAssertGreaterThan(row["exception_reason"]!.count,160)
+        XCTAssertTrue(row["exception_reason"]!.contains("hardware format mismatch"))
+        XCTAssertFalse(String(describing:row).contains("private"))
+        XCTAssertFalse(String(describing:row).contains("secret"))
+        XCTAssertFalse(String(describing:row).contains("person@"))
+    }
+    func testCrashIncludesApplicationMessageAndOriginalExceptionFrames() throws {
+        let header:[String:Any] = ["incident_id":"incident", "app_version":"1.4.5", "timestamp":"2026-09-09 16:18:09.0000 +0000"]
+        let body:[String:Any] = ["procName":"VoiceFeedMac", "exception":["message":"native exception message"],
+            "asi":["AVFAudio":["required condition is false: format.sampleRate == hwFormat.sampleRate at /Users/private/file"], "unrelated":["secret payload"]],
+            "lastExceptionBacktrace":[["imageIndex":0,"symbol":"OriginalThrowSite"]], "usedImages":[["name":"AVFAudio"]]]
+        var data = try JSONSerialization.data(withJSONObject:header); data.append(10); data.append(try JSONSerialization.data(withJSONObject:body))
+        let row = try XCTUnwrap(DiagnosticEvidence.crash(data))
+        XCTAssertEqual(row["exception_message"],"native exception message")
+        XCTAssertTrue(row["application_info"]!.contains("format.sampleRate == hwFormat.sampleRate"))
+        XCTAssertTrue(row["exception_frames"]!.contains("OriginalThrowSite"))
+        XCTAssertFalse(String(describing:row).contains("private")); XCTAssertFalse(String(describing:row).contains("secret payload"))
+        XCTAssertEqual(row["exception_detail_status"],"available")
+    }
     func testJournalSnapshotIncludesEarlierRunsAndRotations() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:dir) }

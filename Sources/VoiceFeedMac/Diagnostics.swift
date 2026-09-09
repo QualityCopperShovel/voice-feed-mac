@@ -19,8 +19,7 @@ final class MacDiagnostics: @unchecked Sendable {
         catch { logger.error("Cannot write diagnostic log: \(error.localizedDescription, privacy: .public)") }
     }
     func failure(_ event: String, _ error: Error) {
-        let error = error as NSError
-        record(event, fields: ["domain": error.domain, "code": String(error.code)])
+        record(event, fields: DiagnosticEvidence.failure(error))
     }
     private var uploadAttempt = DiagnosticUploadAttempt()
     private let worker = DispatchQueue(label: "voice-feed.diagnostics-upload")
@@ -53,11 +52,15 @@ final class MacDiagnostics: @unchecked Sendable {
                     }
                 }
                 var batch: [[String: String]] = []
+                var batchBytes = 32
                 for var row in rows {
                     let data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
                     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
                     guard !known.contains(digest) else { continue }
-                    row["event_hash"] = digest; batch.append(row)
+                    row["event_hash"] = digest
+                    let size = try JSONSerialization.data(withJSONObject: row).count + 1
+                    if batchBytes + size > 240000 { break }
+                    batchBytes += size; batch.append(row)
                     if batch.count == 100 { break }
                 }
                 let upload = batch

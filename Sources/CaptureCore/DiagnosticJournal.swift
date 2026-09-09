@@ -54,7 +54,7 @@ public final class DiagnosticJournal: @unchecked Sendable {
     }
     public func record(_ event: String, fields: [String: String] = [:]) throws {
         lock.lock(); defer { lock.unlock() }
-        var row = fields.mapValues { String($0.prefix(160)) }
+        var row = DiagnosticEvidence.sanitized(fields)
         row["event"] = String(event.prefix(80)); row["session"] = sessionID
         row["version"] = version; row["timestamp"] = ISO8601DateFormatter().string(from: Date())
         var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])

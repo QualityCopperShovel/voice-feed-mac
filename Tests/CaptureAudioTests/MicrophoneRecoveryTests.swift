@@ -1,6 +1,7 @@
 import XCTest
 import AVFoundation
 import AudioSafety
+import CaptureCore
 @testable import CaptureAudio
 
 final class MicrophoneRecoveryTests: XCTestCase {
@@ -11,6 +12,10 @@ final class MicrophoneRecoveryTests: XCTestCase {
         XCTAssertEqual((error as NSError?)?.domain, "VoiceFeedAudio")
         XCTAssertEqual((error as NSError?)?.code, 1)
         XCTAssertFalse(error?.localizedDescription.contains("test hardware-format assertion") ?? true)
+        let evidence = DiagnosticEvidence.failure(error!)
+        XCTAssertEqual(evidence["exception_name"], "com.apple.coreaudio.avfaudio")
+        XCTAssertEqual(evidence["exception_reason"], "test hardware-format assertion")
+        XCTAssertFalse(evidence["exception_frames"]?.isEmpty ?? true)
         var restarted = false
         XCTAssertNil(VFAudioPerform { restarted = true })
         XCTAssertTrue(restarted)
