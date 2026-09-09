@@ -76,7 +76,7 @@ once because an exited helper cannot run its updater.
 
 The 1.4.2 helper streams through short pauses and suspends audio uploads after 10 seconds of quiet. The microphone stays active locally; a rolling one-second pre-roll preserves speech onset when streaming resumes. Idle heartbeats contain no audio.
 
-### Crash diagnostics (1.4.4)
+### Crash diagnostics (1.4.5)
 
 The menu's **Open diagnostic logs…** opens `~/Library/Logs/Voice Feed`.
 `events.jsonl` and four rotated copies (512 KiB each) retain launch, audio format,

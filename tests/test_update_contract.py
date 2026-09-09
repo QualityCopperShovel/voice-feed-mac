@@ -1,4 +1,5 @@
 import plistlib
+import re
 import unittest
 from pathlib import Path
 
@@ -9,7 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 class UpdateContractTests(unittest.TestCase):
     def test_notarized_archive_replaces_script_updater(self):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
-        self.assertIn('let clientVersion = "1.4.3"', source)
         self.assertIn('let download_url: String', source)
         self.assertIn('let download_sha256: String', source)
         self.assertIn('guard manifest.notarized', source)
@@ -47,7 +47,10 @@ class UpdateContractTests(unittest.TestCase):
 
     def test_bundle_and_runtime_versions_match(self):
         with (ROOT / 'Info.plist').open('rb') as metadata:
-            self.assertEqual(plistlib.load(metadata)['CFBundleShortVersionString'], '1.4.3')
+            version = plistlib.load(metadata)['CFBundleShortVersionString']
+        source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
+        runtime = re.search(r'let clientVersion = "([^" ]+)"', source).group(1)
+        self.assertEqual(version, runtime)
 
     def test_continuous_capture_is_bounded_and_drains_before_stop(self):
         source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
