@@ -304,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                         switch lease {
                         case .failure(let error): self.scheduleReconnect(after: error)
                         case .success:
-                            self.reconnectWorkItem?.cancel(); self.reconnectWorkItem = nil; self.reconnectAttempt = 0; self.listening = true; self.hasEstablishedLease = true
+                            self.reconnectWorkItem?.cancel(); self.reconnectWorkItem = nil; self.listening = true; self.hasEstablishedLease = true
                             self.setStatus("Listening"); self.leaseTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in self.renewLease() }; self.startLiveCapture()
                         }
                     }
@@ -348,7 +348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let captureID = UUID(); liveID = captureID
         setStatus("Connecting live transcription…")
         live=LiveCapture(token:token,connectionID:connectionID,
-            onReady: { guard self.liveID == captureID else { return }; self.setStatus("Listening") },
+            onReady: { guard self.liveID == captureID else { return }; self.reconnectAttempt = 0; self.setStatus("Listening") },
             onFailure: { error in
                 guard self.liveID == captureID else { return }
                 if self.desiredListening { self.scheduleReconnect(after:error) }
