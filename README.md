@@ -76,7 +76,7 @@ once because an exited helper cannot run its updater.
 
 The 1.4.2 helper streams through short pauses and suspends audio uploads after 10 seconds of quiet. The microphone stays active locally; a rolling one-second pre-roll preserves speech onset when streaming resumes. Idle heartbeats contain no audio.
 
-### Crash diagnostics (1.4.5)
+### Crash diagnostics (1.4.6)
 
 The menu's **Open diagnostic logs…** opens `~/Library/Logs/Voice Feed`.
 `events.jsonl` and four rotated copies (512 KiB each) retain launch, audio format,
@@ -89,7 +89,18 @@ quit, power loss or shutdown interruption can all cause it. It is not a diagnosi
 
 **Open macOS crash reports…** opens Apple's DiagnosticReports directory. A
 VoiceFeedMac `.ips`/`.crash` report there supplies the exception and crashing
-thread; the app log supplies the preceding lifecycle. Reports are kept locally,
-not automatically uploaded. If the app cannot stay open, Finder's Go to Folder
-can open either location. No custom fatal-signal handler interferes with Apple's
-crash reporter. Local log-write failures are also reported to macOS unified logs.
+thread; the app log supplies the preceding lifecycle. While paired, version
+1.4.6 automatically syncs structured journal events and summaries of this app's
+recent `.ips` reports at launch and every 30 seconds. It backfills earlier runs,
+prioritizes recent evidence, retries failed uploads, and acknowledges records only
+after the server stores them. The menu shows sync success, failure or timeout.
+
+The authenticated [Capture history](https://voice-feed.aisloppy.com/#capture-history)
+combines server and Mac evidence. Crash summaries contain exception, signal,
+termination and faulting-thread symbols/image identities; full dumps, paths,
+registers, audio, transcripts and credentials are excluded. Storage is scoped to
+the paired owner and bounded to 30 days / 1,000 Mac events. A truncated journal
+record or malformed report is reported explicitly without blocking readable rows.
+No custom fatal-signal handler interferes with Apple's crash reporter. Local
+log-write failures are also reported to macOS unified logs. Logs can sync only
+while the helper is running and can reach Voice Feed.
