@@ -8,8 +8,8 @@ final class MicrophoneRecoveryTests: XCTestCase {
         let error = VFAudioPerform {
             NSException(name: NSExceptionName("com.apple.coreaudio.avfaudio"), reason: "test hardware-format assertion", userInfo: nil).raise()
         }
-        XCTAssertEqual(error?.domain, "VoiceFeedAudio")
-        XCTAssertEqual(error?.code, 1)
+        XCTAssertEqual((error as NSError?)?.domain, "VoiceFeedAudio")
+        XCTAssertEqual((error as NSError?)?.code, 1)
         XCTAssertFalse(error?.localizedDescription.contains("test hardware-format assertion") ?? true)
         var restarted = false
         XCTAssertNil(VFAudioPerform { restarted = true })
