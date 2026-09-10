@@ -129,3 +129,17 @@ They take effect on the next operator-controlled launch. Repeated checks cannot
 start concurrent installs or repeatedly install an already staged version.
 The legacy 1.4.8 updater still relaunches immediately; the automatic channel stays
 on 1.4.8 during this migration to avoid imposing another interruption.
+
+
+## Capture measurements (1.4.10)
+
+Every 30 seconds and at capture end the existing diagnostic uploader retains
+numeric gate input/output/discard/buffer counts, gate transitions, RMS peaks,
+callback/send delays and queue peaks. A per-capture identifier correlates with
+Voice Feed server delivery measurements. No audio or transcripts are logged.
+Gate thresholds, pre-roll, idle uploads and metering are unchanged.
+Capture history explains the values at https://voice-feed.aisloppy.com/#capture-history.
+The helper must be running 1.4.10; downloading alone does not activate measurements.
+The legacy automatic channel stays at 1.4.8 to avoid interrupting active capture.
+
+Signed universal build: CI 34430175490, source 71862ff2231b4da077eb19e4fe706b22c68fa718.
