@@ -84,8 +84,11 @@ final class SpeechGateTests: XCTestCase {
     }
     func testObservationDoesNotChangeGateOutputOrCostBounds() {
         var observed = SpeechGate(), control = SpeechGate()
-        let sequence = Array(repeating: Int16(0), count: 1800) + [300] +
-            Array(repeating: Int16(75), count: 50) + Array(repeating: Int16(0), count: 120) + [300]
+        var sequence = Array(repeating: Int16(0), count: 1800)
+        sequence.append(300)
+        sequence.append(contentsOf: Array(repeating: Int16(75), count: 50))
+        sequence.append(contentsOf: Array(repeating: Int16(0), count: 120))
+        sequence.append(300)
         for sample in sequence {
             let a = observed.consume(pcm(sample)), b = control.consume(pcm(sample))
             XCTAssertEqual(audio(a), audio(b))
