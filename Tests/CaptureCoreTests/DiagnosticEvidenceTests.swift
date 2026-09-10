@@ -82,4 +82,14 @@ final class DiagnosticUploadAttemptTests: XCTestCase {
         let next = try XCTUnwrap(owner.begin()); XCTAssertTrue(owner.finish(next, success: true))
         XCTAssertEqual(owner.state,"completed")
     }
+    func testCaptureMetricsSurviveJournalSanitizationWithoutPayload() {
+        var gate = SpeechGate()
+        var fields = gate.diagnostics()
+        fields["capture_id"] = "test-capture"; fields["stage"] = "periodic"
+        fields["audio_gap_ms"] = "90"; fields["send_delay_ms"] = "12"; fields["queue_packets_max"] = "1"
+        XCTAssertEqual(DiagnosticEvidence.sanitized(fields), fields)
+        fields["audio"] = "private samples"; fields["transcript"] = "private words"
+        XCTAssertNil(DiagnosticEvidence.sanitized(fields)["audio"])
+        XCTAssertNil(DiagnosticEvidence.sanitized(fields)["transcript"])
+    }
 }

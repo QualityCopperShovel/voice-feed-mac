@@ -20,6 +20,20 @@ final class LiveCapture: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var packets: [[String: Any]] = []
     private var gate = SpeechGate()
+    private let captureID = UUID().uuidString
+    private var lastDiagnostic = Date()
+    private var maxAudioGapMs = 0
+    private var maxSendMs = 0
+    private var maxQueuePackets = 0
+    private func recordDiagnostics(_ stage: String) {
+        var fields = gate.diagnostics()
+        fields["capture_id"] = captureID; fields["stage"] = stage
+        fields["audio_gap_ms"] = String(maxAudioGapMs)
+        fields["send_delay_ms"] = String(maxSendMs)
+        fields["queue_packets_max"] = String(maxQueuePackets)
+        MacDiagnostics.shared.record("capture_sample", fields: fields)
+        maxAudioGapMs = 0; maxSendMs = 0; maxQueuePackets = 0; lastDiagnostic = Date()
+    }
     private var lastHeartbeat = Date()
     private var sending = false
     private var sendStarted = Date()
@@ -42,6 +56,7 @@ final class LiveCapture: @unchecked Sendable {
         self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate
         var request=URLRequest(url: URL(string: "wss://voice-feed.aisloppy.com/api/device/live")!)
         request.timeoutInterval=15
+        request.setValue(captureID, forHTTPHeaderField: "X-Voice-Capture-ID")
         request.setValue("gated", forHTTPHeaderField: "X-Voice-Capture-Mode")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(connectionID, forHTTPHeaderField: "X-Voice-Connection")
@@ -74,6 +89,7 @@ final class LiveCapture: @unchecked Sendable {
                     let audio = try converter.convert(buffer)
                     self.queue.async {
                         guard !self.terminal, self.drainStarted == nil else { return }
+                        self.maxAudioGapMs = max(self.maxAudioGapMs, Int(Date().timeIntervalSince(self.lastBuffer) * 1000))
                         self.lastBuffer = Date()
                         guard !audio.isEmpty else { return }
                         if self.packets.count >= 100 { self.failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
@@ -83,6 +99,7 @@ final class LiveCapture: @unchecked Sendable {
                             case .pause: self.packets.append(["type":"capture.pause"])
                             }
                         }
+                        self.maxQueuePackets = max(self.maxQueuePackets, self.packets.count)
                         self.pump()
                     }
                 } catch { self.queue.async { self.fail(error) } }
@@ -116,6 +133,7 @@ final class LiveCapture: @unchecked Sendable {
             sending=true; sendStarted=Date()
             socket?.send(.string(String(decoding:bytes,as:UTF8.self))) { error in
                 self.queue.async {
+                    self.maxSendMs = max(self.maxSendMs, Int(Date().timeIntervalSince(self.sendStarted) * 1000))
                     self.sending=false
                     if let error { self.fail(error) } else { self.pump() }
                 }
@@ -169,6 +187,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     private func finish() {
         guard !terminal else { return }; terminal=true
+        recordDiagnostics("capture_end")
         stopEngine(); timer?.cancel(); timer=nil; packets.removeAll()
         socket?.cancel(with:.normalClosure,reason:nil); session.invalidateAndCancel()
     }
@@ -178,6 +197,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     private func checkDeadline() {
         let now=Date()
+        if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
         if ready && drainStarted == nil && now.timeIntervalSince(lastBuffer)>30 { failMessage("Microphone stopped producing audio for 30 seconds"); return }
         if sending && now.timeIntervalSince(sendStarted)>10 { failMessage("Audio upload timed out"); return }
