@@ -1,6 +1,10 @@
 import XCTest
 @testable import CaptureCore
 final class CaptureRecoveryTests: XCTestCase {
+    func testContinuousRecoveryBacksOffWithoutGivingUp() {
+        XCTAssertEqual((1...7).map { CaptureRecovery.retryDelay(attempt: $0) }, [1, 2, 4, 8, 16, 30, 30])
+        XCTAssertEqual(CaptureRecovery.retryDelay(attempt: 100000), 30)
+    }
     func testSleepAndStopInvalidateEveryPriorCallback() {
         var recovery = CaptureRecovery(); let before = recovery.generation
         XCTAssertTrue(recovery.accepts(before))
