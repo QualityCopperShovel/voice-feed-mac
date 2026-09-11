@@ -13,10 +13,11 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 # Fetch the exact Swift package, app metadata, and client source with bounded
 # connection and overall deadlines.
 mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac" "$BUILD_DIR/Sources/CaptureCore" "$BUILD_DIR/Tests/CaptureCoreTests" "$BUILD_DIR/Sources/AudioSafety/include" "$BUILD_DIR/Sources/CaptureAudio" "$BUILD_DIR/Tests/CaptureAudioTests"
-for FILE in Package.swift Info.plist; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
+mkdir -p "$BUILD_DIR/Resources"
+for FILE in Package.swift Info.plist Resources/AppIcon.icns; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
 curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/Sources/VoiceFeedMac/main.swift" -o "$BUILD_DIR/Sources/VoiceFeedMac/main.swift"
 
-for FILE in Sources/AudioSafety/AudioSafety.m Sources/AudioSafety/include/AudioSafety.h Sources/CaptureAudio/MicrophoneConverter.swift Sources/CaptureAudio/UpdateLauncher.swift Tests/CaptureAudioTests/UpdateLauncherTests.swift Sources/CaptureAudio/SystemMicrophoneDevice.swift Tests/CaptureAudioTests/MicrophoneRecoveryTests.swift Sources/CaptureCore/CaptureRecovery.swift Sources/CaptureCore/MicrophoneReadiness.swift Sources/CaptureCore/RotationBuffer.swift Sources/CaptureCore/RecoveryAudio.swift Tests/CaptureCoreTests/RecoveryAudioTests.swift Tests/CaptureCoreTests/RotationBufferTests.swift Tests/CaptureCoreTests/MicrophoneReadinessTests.swift Tests/CaptureCoreTests/CaptureRecoveryTests.swift Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Sources/CaptureCore/UpdateAdmission.swift Sources/CaptureCore/UpdateRelaunch.swift Tests/CaptureCoreTests/UpdateRelaunchTests.swift Tests/CaptureCoreTests/UpdateAdmissionTests.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
+for FILE in Sources/AudioSafety/AudioSafety.m Sources/AudioSafety/include/AudioSafety.h Sources/CaptureAudio/MicrophoneConverter.swift Sources/CaptureAudio/UpdateLauncher.swift Tests/CaptureAudioTests/UpdateLauncherTests.swift Tests/CaptureAudioTests/AppIconTests.swift Sources/CaptureAudio/SystemMicrophoneDevice.swift Tests/CaptureAudioTests/MicrophoneRecoveryTests.swift Sources/CaptureCore/CaptureRecovery.swift Sources/CaptureCore/MicrophoneReadiness.swift Sources/CaptureCore/RotationBuffer.swift Sources/CaptureCore/RecoveryAudio.swift Tests/CaptureCoreTests/RecoveryAudioTests.swift Tests/CaptureCoreTests/RotationBufferTests.swift Tests/CaptureCoreTests/MicrophoneReadinessTests.swift Tests/CaptureCoreTests/CaptureRecoveryTests.swift Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Sources/CaptureCore/UpdateAdmission.swift Sources/CaptureCore/UpdateRelaunch.swift Tests/CaptureCoreTests/UpdateRelaunchTests.swift Tests/CaptureCoreTests/UpdateAdmissionTests.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
   curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"
 done
 
@@ -31,6 +32,7 @@ STAGED_APP="$BUILD_DIR/Voice Feed.app"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 install -m 755 "$BIN_DIR/VoiceFeedMac" "$STAGED_APP/Contents/MacOS/VoiceFeedMac"
 install -m 644 "$BUILD_DIR/Info.plist" "$STAGED_APP/Contents/Info.plist"
+install -m 644 "$BUILD_DIR/Resources/AppIcon.icns" "$STAGED_APP/Contents/Resources/AppIcon.icns"
 
 # Preserve macOS privacy grants when the owner's Developer ID is available.
 # Other source-build users retain the explicit ad-hoc fallback.

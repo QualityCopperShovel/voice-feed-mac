@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.8" y2="1">
+      <stop stop-color="#294c3c"/><stop offset="1" stop-color="#10291e"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f2fff5"/><stop offset="1" stop-color="#b7edc8"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="76" width="896" height="884" rx="204" fill="#08150e" opacity=".22"/>
+  <rect x="64" y="64" width="896" height="884" rx="204" fill="url(#tile)"/>
+  <rect x="66" y="66" width="892" height="880" rx="202" fill="none" stroke="#b7edc8" stroke-opacity=".15" stroke-width="4"/>
+  <rect x="271" y="244" width="186" height="358" rx="93" fill="url(#ink)"/>
+  <path d="M211 487v27c0 85 68 153 153 153s153-68 153-153v-27M364 667v108M286 775h156"
+        fill="none" stroke="#ddf7e5" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#8fe0ac">
+    <rect x="604" y="319" width="198" height="39" rx="19.5"/>
+    <rect x="604" y="431" width="139" height="39" rx="19.5"/>
+    <rect x="604" y="543" width="222" height="39" rx="19.5"/>
+    <rect x="604" y="655" width="167" height="39" rx="19.5"/>
+  </g>
+</svg>

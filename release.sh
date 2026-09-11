@@ -42,6 +42,7 @@ BIN_DIR="$(xcrun swift build -c release --show-bin-path --package-path "$ROOT")"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$DIST"
 install -m 755 "$BIN_DIR/VoiceFeedMac" "$APP/Contents/MacOS/VoiceFeedMac"
 install -m 644 "$ROOT/Info.plist" "$APP/Contents/Info.plist"
+install -m 644 "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 run_with_timeout 180 codesign --force --deep --options runtime --timestamp \
   --entitlements "$ROOT/Entitlements.plist" --sign "$IDENTITY" "$APP"

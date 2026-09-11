@@ -186,3 +186,11 @@ Staged updates remain labeled **Restart to use Voice Feed <version>** until
 activation. Selecting that action drains owned audio, releases the capture lease,
 and reopens the installed bundle. Update messages no longer replace microphone
 status, and clicking a capture failure cannot turn it into a false Listening label.
+
+## App icon
+
+The native bundle includes `Resources/AppIcon.icns` at standard and Retina sizes
+from 16 to 1024 pixels. The editable source is `Resources/AppIcon.svg`; regenerate
+the committed PNG and ICNS with `python3 scripts/build_icon.py` (CairoSVG required
+only for artwork development). All installation and signing paths package the
+same icon before signing.
