@@ -8,7 +8,10 @@ Download the signed and Apple-notarized universal app from
 [Voice Feed](https://voice-feed.aisloppy.com/), unzip it, and move it to
 `~/Applications`. The same notarized release works on Apple silicon and Intel
 Macs. Future updates are downloaded from Voice Feed, checksum-verified, checked
-with macOS code-signing and Gatekeeper, and installed with rollback.
+with macOS code-signing and Gatekeeper, and installed with rollback. Version 1.5.1 automatically drains pending words,
+releases the capture lease, and relaunches after installation. A failed or timed-out
+activation leaves the current process open and resumes capture, with a retry in
+the menu. Earlier clients need one manual relaunch to activate this behavior.
 
 ## Security boundary
 

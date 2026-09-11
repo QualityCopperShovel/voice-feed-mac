@@ -6,11 +6,12 @@ import Security
 import ServiceManagement
 import OSLog
 import CaptureCore
+import CaptureAudio
 
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.0"
+let clientVersion = "1.5.1"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -35,9 +36,10 @@ final class AutoUpdater {
     struct Manifest: Decodable { let version: String; let download_url: String; let download_sha256: String; let notarized: Bool }
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 45; return URLSession(configuration: config) }()
     private let status: (String) -> Void
+    private let installed: () -> Void
     private var timer: Timer?
     private let updates = UpdateAdmission(currentVersion: clientVersion)
-    init(status: @escaping (String) -> Void) { self.status = status }
+    init(status: @escaping (String) -> Void, installed: @escaping () -> Void) { self.status = status; self.installed = installed }
     var stagedVersion: String? { updates.stagedVersion }
     func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }
     func check(announce: Bool = false) {
@@ -95,7 +97,8 @@ final class AutoUpdater {
                 try? manager.removeItem(at: backup)
                 self.updates.installed(version)
                 MacDiagnostics.shared.record("update_staged")
-                self.status("Update installed · takes effect next launch")
+                self.status("Update installed · restarting…")
+                DispatchQueue.main.async(execute: self.installed)
             } catch {
                 self.status("Update failed: \(error.localizedDescription)")
             }
@@ -149,13 +152,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var live: LiveCapture?, leaseTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
     var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), listening = false, desiredListening = false, leaseRenewalInFlight = false, hasEstablishedLease = false, reconnectAttempt = 0, statusRevision = 0
-    var quitting = false, restartAfterStop = false
+    var quitting = false
+    private var drainCompletion: UpdateRelaunch.Completion?
+    private var resumeAfterUpdate = false
     private var lastCaptureAlarm = Date.distantPast
     var recovery = CaptureRecovery()
     var liveID = UUID()
     var workspaceObservers: [NSObjectProtocol] = []
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
-    lazy var updater = AutoUpdater { [weak self] message in self?.setUpdateStatus(message) }
+    lazy var updater = AutoUpdater(status: { [weak self] message in self?.setUpdateStatus(message) },
+                                   installed: { [weak self] in self?.restartForUpdate() })
+    lazy var relaunch = UpdateRelaunch(
+        drain: { [unowned self] done in
+            self.drainCompletion = done; self.stopListening()
+            return { [weak self] in self?.drainCompletion = nil }
+        },
+        release: { [unowned self] done in
+            guard self.api.token != nil else { done(.success(())); return {} }
+            self.api.request("/api/device/lease/\(self.connectionID)", method: "DELETE") { result in
+                done(result.map { _ in () })
+            }
+            return {}
+        },
+        launch: { [unowned self] done in UpdateLauncher.launch(at: Bundle.main.bundleURL, completion: done) },
+        changed: { [unowned self] state, error in
+            UserDefaults.standard.set(["version": self.updater.stagedVersion ?? "unknown",
+                                       "state": state.rawValue, "updated_at": Date().timeIntervalSince1970],
+                                      forKey: "updateActivation")
+            self.update.isEnabled = state == .failed
+            self.update.title = error ?? "Activating update · \(state.rawValue)…"
+        },
+        finished: { [unowned self] success in
+            if success {
+                MacDiagnostics.shared.record("update_relaunch")
+                NSApplication.shared.terminate(nil)
+            } else {
+                self.drainCompletion = nil; self.stopCapture()
+                self.connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                if self.resumeAfterUpdate { self.startListening() }
+            }
+        })
+    private func restartForUpdate() {
+        guard updater.stagedVersion != nil, !quitting, !relaunch.running else { return }
+        resumeAfterUpdate = desiredListening || api.token != nil
+        relaunch.start()
+    }
     let loginItem = NSMenuItem(title: "Open at login: checking…", action: #selector(repairLoginItem), keyEquivalent: "")
     // The legacy installer wrote this LaunchAgent. Once macOS owns the login
     // item, the duplicate agent is removed so one visible mechanism remains.
@@ -191,6 +232,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         api.token = keychain.load(); refreshMenu()
         MacDiagnostics.shared.sync(api: api) { self.diagnosticStatus.title = $0 }
         ensureLoginItem()
+        if let receipt = UserDefaults.standard.dictionary(forKey: "updateActivation") {
+            if receipt["version"] as? String == clientVersion {
+                UserDefaults.standard.set(["version": clientVersion, "state": "completed",
+                                           "updated_at": Date().timeIntervalSince1970], forKey: "updateActivation")
+            } else if receipt["state"] as? String != "completed" {
+                update.title = "Previous update restart was interrupted — click to retry"
+            }
+        }
         updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
         else { DispatchQueue.main.async { self.showFirstRunGuide() } }
@@ -238,6 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applyStatus(_ text: String) { statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text) } }
     func setUpdateStatus(_ text: String) { DispatchQueue.main.async {
+        guard !self.relaunch.running, self.relaunch.state != .failed else { return }
         if let staged = self.updater.stagedVersion {
             self.update.title = "Restart to use Voice Feed \(staged)"; self.update.isEnabled = true
         } else if text.hasPrefix("Checking") || text.hasPrefix("Installing") {
@@ -249,7 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     } }
     @objc func checkForUpdates() {
         if updater.stagedVersion != nil {
-            restartAfterStop = true; quitting = true; stopListening()
+            restartForUpdate()
         } else { setUpdateStatus("Checking for update…"); updater.check(announce: true) }
     }
     func refreshMenu() { connect.isHidden = api.token != nil }
@@ -274,7 +324,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     func willSleep() {
         MacDiagnostics.shared.record("device_sleep")
-        recovery.sleep(); reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+        recovery.sleep(); relaunch.cancel("Update restart interrupted by sleep — click to retry")
+        reconnectWorkItem?.cancel(); reconnectWorkItem = nil
         stopCapture(); setStatus("Sleeping · capture will resume after wake")
     }
     func didWake() {
@@ -290,7 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     // macOS presents its standard microphone consent dialog before capture.
     @objc func startListening() {
-        guard api.token != nil, !desiredListening else { return }
+        guard api.token != nil, !desiredListening, !relaunch.running, !quitting else { return }
         desiredListening = true; reconnectAttempt = 0; reconnectWorkItem?.cancel(); refreshMenu(); setStatus("Requesting microphone…")
         AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async { self.enableAndLease() } }
     }
@@ -386,16 +437,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func finishStop(error:Error? = nil) {
         stopCapture()
         setStatus(error?.localizedDescription ?? "Paused")
+        if let completion = drainCompletion {
+            drainCompletion = nil
+            if let error { completion(.failure(error)) } else { completion(.success(())) }
+            return
+        }
         api.request("/api/device/lease/\(connectionID)",method:"DELETE") { _ in
             DispatchQueue.main.async {
-                guard self.quitting else { return }
-                if self.restartAfterStop {
-                    let launcher = Process(); launcher.executableURL = URL(fileURLWithPath: "/bin/sh")
-                    launcher.arguments = ["-c", "sleep 1; exec /usr/bin/open -n \"$1\"", "voice-feed-relaunch", Bundle.main.bundleURL.path]
-                    do { try launcher.run() }
-                    catch { self.quitting = false; self.setStatus("Could not reopen Voice Feed; open it from Applications"); return }
-                }
-                NSApplication.shared.terminate(nil)
+                if self.quitting { NSApplication.shared.terminate(nil) }
             }
         }
     }
@@ -404,7 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         live?.cancel(); live=nil; listening=false
         leaseTimer?.invalidate(); leaseTimer=nil; refreshMenu()
     }
-    @objc func quit() { MacDiagnostics.shared.record("quit_requested"); quitting=true; stopListening() }
+    @objc func quit() { MacDiagnostics.shared.record("quit_requested"); quitting=true; resumeAfterUpdate=false; relaunch.cancel("Update restart cancelled by Quit"); stopListening() }
 }
 
 // LSUIElement hides the Dock icon; AppKit still needs its application run loop.

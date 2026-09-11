@@ -20,13 +20,18 @@ class UpdateContractTests(unittest.TestCase):
         self.assertNotIn('installer_url', source)
         self.assertNotIn('VOICE_FEED_AUTO_UPDATE', source)
 
-    def test_update_cannot_end_running_capture(self):
+    def test_update_activation_is_owned_by_bounded_capture_drain(self):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
         updater = source[source.index('final class AutoUpdater'):source.index('// Capture credentials')]
         self.assertNotIn('NSApplication.shared.terminate', updater)
         self.assertNotIn('/usr/bin/open', updater)
         self.assertNotIn('stopListening', updater)
-        self.assertIn('takes effect next launch', updater)
+        self.assertIn('DispatchQueue.main.async(execute: self.installed)', updater)
+        self.assertIn('self?.restartForUpdate()', source)
+        self.assertIn('lazy var relaunch = UpdateRelaunch(', source)
+        self.assertNotIn('sleep 1; exec', source)
+        self.assertIn('UpdateLauncher.launch(at: Bundle.main.bundleURL', source)
+        self.assertIn('configuration.createsNewApplicationInstance = true', (ROOT / 'Sources/CaptureAudio/UpdateLauncher.swift').read_text())
         self.assertIn('updates.begin()', updater)
 
     def test_application_bootstraps_appkit(self):
