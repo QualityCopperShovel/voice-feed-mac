@@ -8,7 +8,7 @@ import OSLog
 import CaptureCore
 
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
-// It retains no recordings and drains final transcription before stopping.
+// It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
 let clientVersion = "1.5.0"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
