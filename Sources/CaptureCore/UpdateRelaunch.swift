@@ -52,7 +52,8 @@ public final class UpdateRelaunch {
         }
         stepTimer = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + limits[index], execute: timeout)
-        abandon = operations[index] { [weak self] result in
+        let operation = operations[index]
+        abandon = operation { [weak self] result in
             DispatchQueue.main.async {
                 guard let self, self.generation == ticket, self.state == step else { return }
                 switch result {
