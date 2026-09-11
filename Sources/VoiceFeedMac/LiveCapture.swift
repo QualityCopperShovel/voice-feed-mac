@@ -16,6 +16,7 @@ final class LiveCapture: @unchecked Sendable {
     }()
     private var socket: URLSessionWebSocketTask?
     private var configurationObserver: NSObjectProtocol?
+    private var defaultMicrophoneObserver: DefaultMicrophoneObserver?
     private var lastBuffer = Date()
     private var timer: DispatchSourceTimer?
     private var packets: [[String: Any]] = []
@@ -42,6 +43,7 @@ final class LiveCapture: @unchecked Sendable {
     private var ready = false
     private var microphoneHealth = MicrophoneReadiness()
     private var failureReporting = false
+    private var finishFailure: (() -> Void)?
     private var terminal = false
     private var stopSent = false
     private var tapped = false
@@ -125,6 +127,10 @@ final class LiveCapture: @unchecked Sendable {
                 self.failMessage("Microphone configuration changed; reconnecting")
             }
         }
+        defaultMicrophoneObserver = try DefaultMicrophoneObserver(queue: queue) { [weak self] in
+            guard let self, !self.terminal, !self.failureReporting, self.drainStarted == nil else { return }
+            self.fail(NSError(domain: "VoiceFeedAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Selected microphone changed; reconnecting"]))
+        }
         MacDiagnostics.shared.record("audio_engine_started")
     }
     private func pump() {
@@ -164,6 +170,8 @@ final class LiveCapture: @unchecked Sendable {
                     }
                     if type == "ready" && !self.ready {
                         self.ready=true; if self.drainStarted == nil { try self.capture() }
+                    } else if type == "capture.failure_received" && self.failureReporting {
+                        self.finishFailure?(); return
                     } else if type == "completed" {
                         self.finish(); DispatchQueue.main.async(execute:self.onComplete); return
                     } else if type == "error" {
@@ -184,6 +192,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     func cancel() { queue.async { self.finish() } }
     private func stopEngine() {
+        defaultMicrophoneObserver?.stop(); defaultMicrophoneObserver = nil
         MacDiagnostics.shared.record("audio_engine_stopping")
         if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer); configurationObserver = nil }
         if let error = VFAudioPerform({ self.engine.stop() }) { MacDiagnostics.shared.failure("capture_failed", error) }
@@ -193,7 +202,7 @@ final class LiveCapture: @unchecked Sendable {
         }
     }
     private func finish() {
-        guard !terminal else { return }; terminal=true
+        guard !terminal else { return }; terminal=true; finishFailure=nil
         recordDiagnostics("capture_end")
         stopEngine(); timer?.cancel(); timer=nil; packets.removeAll()
         socket?.cancel(with:.normalClosure,reason:nil); session.invalidateAndCancel()
@@ -212,10 +221,14 @@ final class LiveCapture: @unchecked Sendable {
             let report = "{\"type\":\"capture.failed\",\"code\":\"audio_\(failure.code)\"}"
             let complete = {
                 guard !self.terminal else { return }
+                self.finishFailure = nil
                 self.finish()
                 DispatchQueue.main.async { self.onFailure(error) }
             }
-            socket?.send(.string(report)) { _ in self.queue.async(execute: complete) }
+            finishFailure = complete
+            socket?.send(.string(report)) { sendError in
+                if sendError != nil { self.queue.async(execute: complete) }
+            }
             queue.asyncAfter(deadline: .now() + 2, execute: complete)
         } else {
             finish(); DispatchQueue.main.async { self.onFailure(error) }

@@ -27,3 +27,26 @@ public final class SystemMicrophoneDevice: MicrophoneDeviceAccess {
         return MicrophoneFormat(sampleRate: format.sampleRate, channelCount: format.channelCount)
     }
 }
+
+/// A bound input no longer follows changes implicitly; restart on default changes.
+public final class DefaultMicrophoneObserver {
+    private var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    private let queue: DispatchQueue
+    private let listener: AudioObjectPropertyListenerBlock
+    private var observing = false
+    public init(queue: DispatchQueue, changed: @escaping () -> Void) throws {
+        self.queue = queue
+        listener = { _, _ in changed() }
+        let status = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
+        guard status == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Could not observe macOS microphone changes (\(status))."])
+        }
+        observing = true
+    }
+    public func stop() {
+        guard observing else { return }; observing = false
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
+    }
+    deinit { stop() }
+}
