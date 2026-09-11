@@ -143,3 +143,14 @@ The helper must be running 1.4.10; downloading alone does not activate measureme
 The legacy automatic channel stays at 1.4.8 to avoid interrupting active capture.
 
 Signed universal build: CI 34430175490, source 71862ff2231b4da077eb19e4fe706b22c68fa718.
+
+## Current input recovery (1.4.12)
+
+Each attempt explicitly binds the engine to macOS's current default input before
+checking its hardware format. A removed headset is not reused implicitly. The
+helper reports listening only after a converted microphone buffer arrives;
+initialization without a buffer fails within ten seconds. Format failures retain
+the capture ID, numeric device ID, sample rate and channels in diagnostics.
+Native capture failures send a bounded, allowlisted reason to Voice Feed before
+closing, so the web status preserves the concrete failure. No device name, audio
+or arbitrary error text is uploaded. Updates remain staged until the next launch.

@@ -2,7 +2,7 @@ import Foundation
 
 /// Only structured lifecycle fields and crash metadata may leave the Mac.
 public enum DiagnosticEvidence {
-    public static let fields: Set<String> = ["capture_id", "stage", "gate_input_ms", "gate_output_ms", "gate_discarded_ms", "gate_buffer_ms", "gate_open_count", "gate_pause_count", "gate_peak_dbfs", "gate_idle_peak_dbfs", "gate_preroll_ms", "gate_active", "audio_gap_ms", "send_delay_ms", "queue_packets_max", "event", "session", "version", "timestamp", "os", "sample_rate", "channels", "listening", "desired", "domain", "code", "exception_type", "signal", "termination_namespace", "termination_code", "frames", "exception_name", "exception_reason", "exception_message", "exception_frames", "application_info", "exception_detail_status"]
+    public static let fields: Set<String> = ["input_device", "capture_id", "stage", "gate_input_ms", "gate_output_ms", "gate_discarded_ms", "gate_buffer_ms", "gate_open_count", "gate_pause_count", "gate_peak_dbfs", "gate_idle_peak_dbfs", "gate_preroll_ms", "gate_active", "audio_gap_ms", "send_delay_ms", "queue_packets_max", "event", "session", "version", "timestamp", "os", "sample_rate", "channels", "listening", "desired", "domain", "code", "exception_type", "signal", "termination_namespace", "termination_code", "frames", "exception_name", "exception_reason", "exception_message", "exception_frames", "application_info", "exception_detail_status"]
     public static func limit(_ key: String) -> Int {
         if ["frames", "exception_frames"].contains(key) { return 6000 }
         if ["exception_reason", "exception_message", "application_info"].contains(key) { return 2048 }

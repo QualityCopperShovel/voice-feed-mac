@@ -35,3 +35,55 @@ final class MicrophoneRecoveryTests: XCTestCase {
         }
     }
 }
+
+final class InputBindingTests: XCTestCase {
+    final class Device: MicrophoneDeviceAccess {
+        var selected: UInt32 = 12
+        var bound: UInt32 = 7 // A removed USB headset.
+        var available = true
+        var bindError: Error?
+        func defaultInputDevice() throws -> UInt32 { selected }
+        func bindInputDevice(_ device: UInt32) throws {
+            if let bindError { throw bindError }
+            bound = device
+        }
+        func inputFormat() -> MicrophoneFormat {
+            available && bound == selected
+                ? MicrophoneFormat(sampleRate: 48000, channelCount: 1)
+                : MicrophoneFormat(sampleRate: 0, channelCount: 0)
+        }
+    }
+    func testRemovedHeadsetIsReplacedWithCurrentSystemInputBeforeFormatRead() throws {
+        let device = Device()
+        var evidence: [String: String] = [:]
+        let format = try MicrophoneInput.prepare(device) { evidence = $0 }
+        XCTAssertEqual(device.bound, 12)
+        XCTAssertEqual(format.sampleRate, 48000)
+        XCTAssertEqual(evidence["input_device"], "12")
+        device.selected = 15
+        _ = try MicrophoneInput.prepare(device) { _ in }
+        XCTAssertEqual(device.bound, 15)
+    }
+    func testAbsentInputFailsWithoutBindingAnArbitraryDevice() {
+        let device = Device(); device.selected = 0
+        XCTAssertThrowsError(try MicrophoneInput.prepare(device) { _ in }) {
+            XCTAssertEqual(($0 as NSError).code, 4)
+        }
+        XCTAssertEqual(device.bound, 7)
+    }
+    func testUnavailableFormatRetainsEvidenceAndFails() {
+        let device = Device(); device.available = false
+        var evidence: [String: String] = [:]
+        XCTAssertThrowsError(try MicrophoneInput.prepare(device) { evidence = $0 }) {
+            XCTAssertEqual(($0 as NSError).code, 2)
+        }
+        XCTAssertEqual(evidence["input_device"], "12")
+        XCTAssertEqual(evidence["channels"], "0")
+    }
+    func testBindingFailureIsNotReportedAsHealthy() {
+        let device = Device(); device.bindError = NSError(domain: NSOSStatusErrorDomain, code: -50)
+        XCTAssertThrowsError(try MicrophoneInput.prepare(device) { _ in XCTFail("No format was read") }) {
+            XCTAssertEqual(($0 as NSError).code, -50)
+        }
+    }
+}

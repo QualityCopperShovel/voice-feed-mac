@@ -40,6 +40,8 @@ final class LiveCapture: @unchecked Sendable {
     private var started = Date()
     private var drainStarted: Date?
     private var ready = false
+    private var microphoneHealth = MicrophoneReadiness()
+    private var failureReporting = false
     private var terminal = false
     private var stopSent = false
     private var tapped = false
@@ -77,21 +79,25 @@ final class LiveCapture: @unchecked Sendable {
         let converter = MicrophoneConverter()
         let nativeError = VFAudioPerform {
             let node = self.engine.inputNode; input = node
-            let format = node.inputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else {
-                startError = NSError(domain:"VoiceFeedAudio", code:2, userInfo:[NSLocalizedDescriptionKey:"Microphone audio format is unavailable"]); return
-            }
-            MacDiagnostics.shared.record("audio_format", fields:["sample_rate":String(format.sampleRate), "channels":String(format.channelCount)])
+            do {
+                _ = try MicrophoneInput.prepare(SystemMicrophoneDevice(node: node)) { fields in
+                    MacDiagnostics.shared.record("audio_format", fields: fields.merging(["capture_id": self.captureID]) { _, new in new })
+                }
+            } catch { startError = error; return }
             // Do not force a cached output format back onto changing hardware.
             node.installTap(onBus:0, bufferSize:4096, format:nil) { buffer, _ in
                 do {
                     // Consume borrowed hardware samples before the callback returns.
                     let audio = try converter.convert(buffer)
                     self.queue.async {
-                        guard !self.terminal, self.drainStarted == nil else { return }
+                        guard !self.terminal, !self.failureReporting, self.drainStarted == nil else { return }
                         self.maxAudioGapMs = max(self.maxAudioGapMs, Int(Date().timeIntervalSince(self.lastBuffer) * 1000))
                         self.lastBuffer = Date()
                         guard !audio.isEmpty else { return }
+                        if self.microphoneHealth.receive() {
+                            self.packets.append(["type": "capture.heartbeat"])
+                            DispatchQueue.main.async(execute: self.onReady)
+                        }
                         if self.packets.count >= 100 { self.failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
                         for event in self.gate.consume(audio) {
                             switch event {
@@ -111,17 +117,18 @@ final class LiveCapture: @unchecked Sendable {
         if let error = (nativeError as Error?) ?? startError { throw error }
         guard input != nil else { throw NSError(domain:"VoiceFeedAudio", code:2) }
         lastBuffer = Date()
+        microphoneHealth = MicrophoneReadiness()
         configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
-                guard !self.terminal, self.drainStarted == nil else { return }
+                guard !self.terminal, !self.failureReporting, self.drainStarted == nil else { return }
                 self.failMessage("Microphone configuration changed; reconnecting")
             }
         }
         MacDiagnostics.shared.record("audio_engine_started")
     }
     private func pump() {
-        guard !terminal, !sending else { return }
+        guard !terminal, !failureReporting, !sending else { return }
         let event:[String:Any]
         if !packets.isEmpty {
             event=packets.removeFirst()
@@ -156,7 +163,7 @@ final class LiveCapture: @unchecked Sendable {
                         self.failMessage("Invalid live transcription response"); return
                     }
                     if type == "ready" && !self.ready {
-                        self.ready=true; if self.drainStarted == nil { try self.capture(); DispatchQueue.main.async(execute:self.onReady) }
+                        self.ready=true; if self.drainStarted == nil { try self.capture() }
                     } else if type == "completed" {
                         self.finish(); DispatchQueue.main.async(execute:self.onComplete); return
                     } else if type == "error" {
@@ -193,20 +200,43 @@ final class LiveCapture: @unchecked Sendable {
     }
     private func failMessage(_ message:String) { fail(NSError(domain:"VoiceFeed",code:3,userInfo:[NSLocalizedDescriptionKey:message])) }
     private func fail(_ error:Error) {
-        guard !terminal else { return }; MacDiagnostics.shared.failure("capture_failed", error); finish(); DispatchQueue.main.async { self.onFailure(error) }
+        guard !terminal, !failureReporting else { return }
+        var fields = DiagnosticEvidence.failure(error)
+        fields["capture_id"] = captureID
+        MacDiagnostics.shared.record("capture_failed", fields: fields)
+        let failure = error as NSError
+        // Report an allowlisted code, never arbitrary NSError text, before closing.
+        if ready && failure.domain == "VoiceFeedAudio" && [1, 2, 4, 5].contains(failure.code) {
+            failureReporting = true
+            stopEngine()
+            let report = "{\"type\":\"capture.failed\",\"code\":\"audio_\(failure.code)\"}"
+            let complete = {
+                guard !self.terminal else { return }
+                self.finish()
+                DispatchQueue.main.async { self.onFailure(error) }
+            }
+            socket?.send(.string(report)) { _ in self.queue.async(execute: complete) }
+            queue.asyncAfter(deadline: .now() + 2, execute: complete)
+        } else {
+            finish(); DispatchQueue.main.async { self.onFailure(error) }
+        }
     }
     private func checkDeadline() {
+        guard !terminal, !failureReporting else { return }
         let now=Date()
         if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
-        if ready && drainStarted == nil && now.timeIntervalSince(lastBuffer)>30 { failMessage("Microphone stopped producing audio for 30 seconds"); return }
+        if ready && drainStarted == nil && microphoneHealth.expired() {
+            fail(NSError(domain: "VoiceFeedAudio", code: 5, userInfo: [NSLocalizedDescriptionKey: microphoneHealth.confirmed ? "Microphone stopped producing audio for 30 seconds" : "The selected microphone produced no audio within 10 seconds"]))
+            return
+        }
         if sending && now.timeIntervalSince(sendStarted)>10 { failMessage("Audio upload timed out"); return }
         if let drainStarted,now.timeIntervalSince(drainStarted)>25 { failMessage("Final words did not finish within 25 seconds"); return }
         if let pingStarted,now.timeIntervalSince(pingStarted)>10 { failMessage("Live transcription disconnected"); return }
         if ready && drainStarted == nil && now.timeIntervalSince(started)>1140 {
             stop(); DispatchQueue.main.async(execute:onRotate); return
         }
-        if ready && drainStarted == nil && now.timeIntervalSince(lastHeartbeat)>5 {
+        if microphoneHealth.confirmed && drainStarted == nil && now.timeIntervalSince(lastHeartbeat)>5 {
             lastHeartbeat=now
             packets.append(["type":"capture.heartbeat"]); pump()
         }

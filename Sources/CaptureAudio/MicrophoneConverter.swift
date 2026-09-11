@@ -35,3 +35,35 @@ public final class MicrophoneConverter {
         return result
     }
 }
+
+/// Re-resolve the system input on every attempt; never retain a removed headset.
+public struct MicrophoneFormat {
+    public let sampleRate: Double
+    public let channelCount: UInt32
+    public init(sampleRate: Double, channelCount: UInt32) {
+        self.sampleRate = sampleRate; self.channelCount = channelCount
+    }
+}
+
+public protocol MicrophoneDeviceAccess {
+    func defaultInputDevice() throws -> UInt32
+    func bindInputDevice(_ device: UInt32) throws
+    func inputFormat() -> MicrophoneFormat
+}
+
+public enum MicrophoneInput {
+    public static func prepare(_ access: MicrophoneDeviceAccess,
+                               evidence: ([String: String]) -> Void) throws -> MicrophoneFormat {
+        let device = try access.defaultInputDevice()
+        guard device != 0 else {
+            throw NSError(domain: "VoiceFeedAudio", code: 4, userInfo: [NSLocalizedDescriptionKey: "macOS has no default microphone. Connect a microphone or select an available input."])
+        }
+        try access.bindInputDevice(device)
+        let format = access.inputFormat()
+        evidence(["input_device": String(device), "sample_rate": String(format.sampleRate), "channels": String(format.channelCount)])
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw NSError(domain: "VoiceFeedAudio", code: 2, userInfo: [NSLocalizedDescriptionKey: "macOS returned an unavailable microphone format after selecting the current input. Open the MacBook lid if using its built-in microphone."])
+        }
+        return format
+    }
+}
