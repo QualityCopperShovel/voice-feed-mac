@@ -68,7 +68,7 @@ class UpdateContractTests(unittest.TestCase):
         # Real PCM conversion across formats is exercised by MicrophoneRecoveryTests.
         self.assertIn('let converter = MicrophoneConverter()', source)
         self.assertIn('format:nil', source)
-        self.assertIn('packets.count >= 100', source)
+        self.assertIn('packets.count >= 600', source)
         self.assertIn('timeIntervalSince(sendStarted)>10', source)
         self.assertIn('timeIntervalSince(drainStarted)>25', source)
         self.assertIn('timeIntervalSince(pingStarted)>10', source)
@@ -78,6 +78,23 @@ class UpdateContractTests(unittest.TestCase):
         self.assertNotIn('maximumWindowSeconds', main)
         self.assertIn('Finishing last words', main)
         self.assertIn('onComplete:', main)
+
+    def test_network_rotation_does_not_stop_the_microphone(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
+        rotation = source[source.index('private func rotate()'):source.index('private func reconnectSocket()')]
+        self.assertNotIn('stopEngine', rotation)
+        self.assertNotIn('stop()', rotation)
+        self.assertIn('rotationBuffer.append(audio)', source)
+        self.assertIn('rotationBuffer.take()', source)
+        self.assertIn('if self.rotating { self.reconnectSocket(); return }', source)
+        self.assertIn('recoveryAudio?.append(audio)', source)
+
+    def test_staged_update_remains_actionable_without_overwriting_capture_status(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
+        status = source[source.index('func setUpdateStatus'):source.index('func refreshMenu')]
+        self.assertIn('Restart to use Voice Feed', status)
+        self.assertNotIn('asyncAfter', status)
+        self.assertNotIn('applyStatus', status)
 
     def test_release_workflow_signs_notarizes_and_publishes(self):
         workflow = (ROOT / '.github/workflows/build-release.yml').read_text()

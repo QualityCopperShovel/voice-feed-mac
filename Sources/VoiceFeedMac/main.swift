@@ -10,7 +10,7 @@ import CaptureCore
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It retains no recordings and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.4.12"
+let clientVersion = "1.5.0"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -38,13 +38,14 @@ final class AutoUpdater {
     private var timer: Timer?
     private let updates = UpdateAdmission(currentVersion: clientVersion)
     init(status: @escaping (String) -> Void) { self.status = status }
+    var stagedVersion: String? { updates.stagedVersion }
     func start() { check(); timer?.invalidate(); timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in self?.check() } }
     func check(announce: Bool = false) {
         guard updates.begin() else { return }
         var request = URLRequest(url: URL(string: "/client-version.json", relativeTo: baseURL)!); request.timeoutInterval = 15
         session.dataTask(with: request) { data, response, error in
             guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { if announce { self.status("Update check failed") }; self.updates.finish(); return }
-            guard self.updates.isNewer(manifest.version) else { if announce { self.status("Voice Feed is up to date") }; self.updates.finish(); return }
+            guard self.updates.isNewer(manifest.version) else { if announce { self.status(self.updates.stagedVersion == nil ? "Voice Feed is up to date" : "Update installed · takes effect next launch") }; self.updates.finish(); return }
             guard manifest.notarized, let downloadURL = URL(string: manifest.download_url), downloadURL.scheme == "https" else { self.status("Update manifest is invalid"); self.updates.finish(); return }
             var downloadRequest = URLRequest(url: downloadURL); downloadRequest.timeoutInterval = 30
             self.session.dataTask(with: downloadRequest) { payload, downloadResponse, downloadError in
@@ -148,7 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var live: LiveCapture?, leaseTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
     var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), listening = false, desiredListening = false, leaseRenewalInFlight = false, hasEstablishedLease = false, reconnectAttempt = 0, statusRevision = 0
-    var quitting = false, rotating = false
+    var quitting = false, restartAfterStop = false
+    private var lastCaptureAlarm = Date.distantPast
     var recovery = CaptureRecovery()
     var liveID = UUID()
     var workspaceObservers: [NSObjectProtocol] = []
@@ -173,15 +175,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             MacDiagnostics.shared.record("main_loop_heartbeat", fields: ["listening": String(self.listening), "desired": String(self.desiredListening)])
         }
         let diagnostics = NSMenuItem(title: "Open diagnostic logs…", action: #selector(openDiagnostics), keyEquivalent: "")
+        let recoveryAudio = NSMenuItem(title: "Open recent audio (30 minutes)…", action: #selector(openRecoveryAudio), keyEquivalent: "")
+        recoveryAudio.target = self
         let crashReports = NSMenuItem(title: "Open macOS crash reports…", action: #selector(openCrashReports), keyEquivalent: "")
         diagnostics.target = self; crashReports.target = self
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         [status, connect, update, devices, quitItem].forEach { $0.target = self }
-        status.action = #selector(dismissStatus)
+        status.action = nil
         loginItem.target = self
-        let menu = NSMenu(); [status, .separator(), connect, .separator(), loginItem, devices, update, version, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        let menu = NSMenu(); [status, .separator(), connect, .separator(), loginItem, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification, object:nil, queue:.main) { [weak self] _ in self?.willSleep() })
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didWakeNotification, object:nil, queue:.main) { [weak self] _ in self?.didWake() })
         api.token = keychain.load(); refreshMenu()
@@ -234,22 +238,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func applyStatus(_ text: String) { statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text) } }
     func setUpdateStatus(_ text: String) { DispatchQueue.main.async {
-        self.applyStatus(text)
-        if text.hasPrefix("Checking") || text.hasPrefix("Installing") {
+        if let staged = self.updater.stagedVersion {
+            self.update.title = "Restart to use Voice Feed \(staged)"; self.update.isEnabled = true
+        } else if text.hasPrefix("Checking") || text.hasPrefix("Installing") {
             self.update.title = text; self.update.isEnabled = false
-        } else if text.lowercased().contains("failed") || text.lowercased().contains("could not") {
-            self.update.title = "Update failed — click to retry"; self.update.isEnabled = true
         } else {
-            self.update.title = text; self.update.isEnabled = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-                if self.update.title == text { self.update.title = "Check for updates" }
-            }
+            self.update.title = text.lowercased().contains("failed") ? "Update failed — click to retry" : text
+            self.update.isEnabled = true
         }
     } }
-    func setTransientStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text); let revision = self.statusRevision; DispatchQueue.main.asyncAfter(deadline: .now() + 8) { if revision == self.statusRevision && self.desiredListening { self.applyStatus("Listening") } } } }
-    @objc func dismissStatus() { setStatus(desiredListening ? "Listening" : "Paused") }
-    @objc func checkForUpdates() { setUpdateStatus("Checking for update…"); updater.check(announce: true) }
+    @objc func checkForUpdates() {
+        if updater.stagedVersion != nil {
+            restartAfterStop = true; quitting = true; stopListening()
+        } else { setUpdateStatus("Checking for update…"); updater.check(announce: true) }
+    }
     func refreshMenu() { connect.isHidden = api.token != nil }
+    @objc func openRecoveryAudio() {
+        NSWorkspace.shared.open(LiveCapture.recoveryDirectory)
+    }
     @objc func openDevices() { NSWorkspace.shared.open(URL(string: "https://voice-feed.aisloppy.com/")!) }
     // Pairing opens Voice Feed in the browser so account approval never occurs
     // inside this native client. The one-time request expires after ten minutes.
@@ -330,6 +336,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     func scheduleReconnect(after error: Error) {
         MacDiagnostics.shared.failure("capture_reconnect", error)
+        statusItem.button?.image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone capture failed")
+        if hasEstablishedLease && Date().timeIntervalSince(lastCaptureAlarm) > 60 {
+            NSSound.beep(); lastCaptureAlarm = Date()
+        }
         guard desiredListening, !recovery.sleeping else { return }
         let failure = error as NSError
         if failure.domain == "VoiceFeed" && [401, 410, 422].contains(failure.code) {
@@ -352,7 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let captureID = UUID(); liveID = captureID
         setStatus("Connecting live transcription…")
         live=LiveCapture(token:token,connectionID:connectionID,
-            onReady: { guard self.liveID == captureID else { return }; self.reconnectAttempt = 0; self.setStatus("Listening") },
+            onReady: { guard self.liveID == captureID, self.desiredListening else { return }; self.reconnectAttempt = 0; self.statusItem.button?.image = voiceFeedStatusImage(); self.setStatus("Listening") },
             onFailure: { error in
                 guard self.liveID == captureID else { return }
                 if self.desiredListening { self.scheduleReconnect(after:error) }
@@ -360,13 +370,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             },
             onComplete: {
                 guard self.liveID == captureID else { return }
-                if self.rotating && self.desiredListening {
-                    self.rotating=false; self.live=nil; self.startLiveCapture()
-                } else if self.desiredListening {
+                if self.desiredListening {
                     self.scheduleReconnect(after: NSError(domain: "VoiceFeedCapture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Capture ended"]))
                 } else { self.finishStop() }
             },
-            onRotate: { guard self.liveID == captureID else { return }; self.rotating=true; self.setStatus("Finishing words before reconnecting…") })
+            onRotate: { guard self.liveID == captureID else { return }; self.setStatus("Renewing connection · microphone stays active") })
         live?.start()
     }
     @objc func stopListening() {
@@ -377,13 +385,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     func finishStop(error:Error? = nil) {
         stopCapture()
-        api.request("/api/device/lease/\(connectionID)",method:"DELETE") { _ in }
         setStatus(error?.localizedDescription ?? "Paused")
-        if quitting { NSApplication.shared.terminate(nil) }
+        api.request("/api/device/lease/\(connectionID)",method:"DELETE") { _ in
+            DispatchQueue.main.async {
+                guard self.quitting else { return }
+                if self.restartAfterStop {
+                    let launcher = Process(); launcher.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    launcher.arguments = ["-c", "sleep 1; exec /usr/bin/open -n \"$1\"", "voice-feed-relaunch", Bundle.main.bundleURL.path]
+                    do { try launcher.run() }
+                    catch { self.quitting = false; self.setStatus("Could not reopen Voice Feed; open it from Applications"); return }
+                }
+                NSApplication.shared.terminate(nil)
+            }
+        }
     }
     func stopCapture() {
         recovery.invalidate(); liveID = UUID(); leaseRenewalInFlight = false
-        live?.cancel(); live=nil; listening=false; rotating=false
+        live?.cancel(); live=nil; listening=false
         leaseTimer?.invalidate(); leaseTimer=nil; refreshMenu()
     }
     @objc func quit() { MacDiagnostics.shared.record("quit_requested"); quitting=true; stopListening() }

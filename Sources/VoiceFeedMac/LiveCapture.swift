@@ -15,6 +15,13 @@ final class LiveCapture: @unchecked Sendable {
         return URLSession(configuration: c)
     }()
     private var socket: URLSessionWebSocketTask?
+    private let socketRequest: URLRequest
+    private var socketGeneration = UUID()
+    private var rotating = false
+    private var stopping = false
+    private var recoveryAudio: RecoveryAudio?
+    private var rotationBuffer = RotationBuffer()
+    private var rotationStarted: Date?
     private var configurationObserver: NSObjectProtocol?
     private var defaultMicrophoneObserver: DefaultMicrophoneObserver?
     private var lastBuffer = Date()
@@ -64,6 +71,7 @@ final class LiveCapture: @unchecked Sendable {
         request.setValue("gated", forHTTPHeaderField: "X-Voice-Capture-Mode")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(connectionID, forHTTPHeaderField: "X-Voice-Connection")
+        socketRequest = request
         socket=session.webSocketTask(with: request)
     }
     func start() {
@@ -75,10 +83,13 @@ final class LiveCapture: @unchecked Sendable {
             timer.setEventHandler { self.checkDeadline() }; self.timer=timer; timer.resume()
         }
     }
+    static let recoveryDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Voice Feed/Recovery Audio", isDirectory: true)
     private func capture() throws {
         var input: AVAudioInputNode?
         var startError: Error?
         let converter = MicrophoneConverter()
+        recoveryAudio = try RecoveryAudio(directory: Self.recoveryDirectory)
         let nativeError = VFAudioPerform {
             let node = self.engine.inputNode; input = node
             do {
@@ -92,23 +103,24 @@ final class LiveCapture: @unchecked Sendable {
                     // Consume borrowed hardware samples before the callback returns.
                     let audio = try converter.convert(buffer)
                     self.queue.async {
-                        guard !self.terminal, !self.failureReporting, self.drainStarted == nil else { return }
+                        guard !self.terminal, !self.failureReporting else { return }
                         self.maxAudioGapMs = max(self.maxAudioGapMs, Int(Date().timeIntervalSince(self.lastBuffer) * 1000))
                         self.lastBuffer = Date()
                         guard !audio.isEmpty else { return }
-                        if self.microphoneHealth.receive() {
+                        do { try self.recoveryAudio?.append(audio) }
+                        catch { self.fail(NSError(domain: "VoiceFeedRecovery", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not preserve microphone audio locally. Capture stopped to avoid unprotected recording."])); return }
+                        let first = self.microphoneHealth.receive(pcm: audio)
+                        if self.rotating {
+                            do { try self.rotationBuffer.append(audio) } catch { self.fail(error) }
+                            return
+                        }
+                        guard self.drainStarted == nil else { return }
+                        if first {
                             self.packets.append(["type": "capture.heartbeat"])
                             DispatchQueue.main.async(execute: self.onReady)
                         }
-                        if self.packets.count >= 100 { self.failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
-                        for event in self.gate.consume(audio) {
-                            switch event {
-                            case .audio(let data): self.packets.append(["type":"input_audio_buffer.append", "audio":data.base64EncodedString()])
-                            case .pause: self.packets.append(["type":"capture.pause"])
-                            }
-                        }
-                        self.maxQueuePackets = max(self.maxQueuePackets, self.packets.count)
-                        self.pump()
+                        self.enqueue(audio)
+
                     }
                 } catch { self.queue.async { self.fail(error) } }
             }
@@ -123,7 +135,7 @@ final class LiveCapture: @unchecked Sendable {
         configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
-                guard !self.terminal, !self.failureReporting, self.drainStarted == nil else { return }
+                guard !self.terminal, !self.failureReporting else { return }
                 self.failMessage("Microphone configuration changed; reconnecting")
             }
         }
@@ -132,6 +144,33 @@ final class LiveCapture: @unchecked Sendable {
             self.fail(NSError(domain: "VoiceFeedAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Selected microphone changed; reconnecting"]))
         }
         MacDiagnostics.shared.record("audio_engine_started")
+    }
+    private func enqueue(_ audio: Data) {
+        if packets.count >= 600 { failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
+        for event in gate.consume(audio) {
+            switch event {
+            case .audio(let data): packets.append(["type": "input_audio_buffer.append", "audio": data.base64EncodedString()])
+            case .pause: packets.append(["type": "capture.pause"])
+            }
+        }
+        maxQueuePackets = max(maxQueuePackets, packets.count)
+        pump()
+    }
+    /// Network rotation never owns the hardware lifetime.
+    private func rotate() {
+        guard !rotating, drainStarted == nil, !terminal else { return }
+        rotating = true; rotationStarted = Date(); drainStarted = Date()
+        MacDiagnostics.shared.record("capture_rotation", fields: ["capture_id": captureID])
+        DispatchQueue.main.async(execute: onRotate)
+        pump()
+    }
+    private func reconnectSocket() {
+        socket?.cancel(with: .normalClosure, reason: nil)
+        socketGeneration = UUID()
+        ready = false; drainStarted = nil; stopSent = false; sending = false
+        started = Date(); lastPing = Date(); pingStarted = nil
+        socket = session.webSocketTask(with: socketRequest)
+        socket?.resume(); receive()
     }
     private func pump() {
         guard !terminal, !failureReporting, !sending else { return }
@@ -144,8 +183,10 @@ final class LiveCapture: @unchecked Sendable {
         do {
             let bytes=try JSONSerialization.data(withJSONObject:event)
             sending=true; sendStarted=Date()
+            let generation = socketGeneration
             socket?.send(.string(String(decoding:bytes,as:UTF8.self))) { error in
                 self.queue.async {
+                    guard !self.terminal, generation == self.socketGeneration else { return }
                     self.maxSendMs = max(self.maxSendMs, Int(Date().timeIntervalSince(self.sendStarted) * 1000))
                     self.sending=false
                     if let error { self.fail(error) } else { self.pump() }
@@ -154,9 +195,10 @@ final class LiveCapture: @unchecked Sendable {
         } catch { fail(error) }
     }
     private func receive() {
+        let generation = socketGeneration
         socket?.receive { result in
             self.queue.async {
-                guard !self.terminal else { return }
+                guard !self.terminal, generation == self.socketGeneration else { return }
                 do {
                     let message=try result.get()
                     let data:Data
@@ -169,10 +211,19 @@ final class LiveCapture: @unchecked Sendable {
                         self.failMessage("Invalid live transcription response"); return
                     }
                     if type == "ready" && !self.ready {
-                        self.ready=true; if self.drainStarted == nil { try self.capture() }
+                        self.ready = true
+                        if self.rotating {
+                            self.rotating = false; self.rotationStarted = nil
+                            if self.microphoneHealth.confirmed { self.packets.append(["type": "capture.heartbeat"]) }
+                            for frame in self.rotationBuffer.take() { self.enqueue(frame) }
+                            if self.microphoneHealth.confirmed && !self.stopping { DispatchQueue.main.async(execute: self.onReady) }
+                            if self.stopping { self.drainStarted = Date() }
+                            self.pump()
+                        } else if self.drainStarted == nil { try self.capture() }
                     } else if type == "capture.failure_received" && self.failureReporting {
                         self.finishFailure?(); return
                     } else if type == "completed" {
+                        if self.rotating { self.reconnectSocket(); return }
                         self.finish(); DispatchQueue.main.async(execute:self.onComplete); return
                     } else if type == "error" {
                         self.failMessage((event["error"] as? [String:Any])?["message"] as? String ?? "Live transcription failed"); return
@@ -184,8 +235,13 @@ final class LiveCapture: @unchecked Sendable {
     }
     func stop() {
         queue.async {
-            guard !self.terminal,self.drainStarted == nil else { return }
+            guard !self.terminal else { return }
+            self.stopping = true
             self.stopEngine()
+            // Finish the old stream, then deliver buffered frames on the next
+            // stream before acknowledging a user stop during rotation.
+            if self.rotating { return }
+            guard self.drainStarted == nil else { return }
             // Drain owned tap buffers already enqueued before sending stop.
             self.queue.async { self.drainStarted=Date(); self.pump() }
         }
@@ -205,6 +261,8 @@ final class LiveCapture: @unchecked Sendable {
         guard !terminal else { return }; terminal=true; finishFailure=nil
         recordDiagnostics("capture_end")
         stopEngine(); timer?.cancel(); timer=nil; packets.removeAll()
+        do { try recoveryAudio?.close() } catch { MacDiagnostics.shared.failure("capture_failed", error) }
+        recoveryAudio = nil
         socket?.cancel(with:.normalClosure,reason:nil); session.invalidateAndCancel()
     }
     private func failMessage(_ message:String) { fail(NSError(domain:"VoiceFeed",code:3,userInfo:[NSLocalizedDescriptionKey:message])) }
@@ -215,7 +273,7 @@ final class LiveCapture: @unchecked Sendable {
         MacDiagnostics.shared.record("capture_failed", fields: fields)
         let failure = error as NSError
         // Report an allowlisted code, never arbitrary NSError text, before closing.
-        if ready && failure.domain == "VoiceFeedAudio" && [1, 2, 4, 5].contains(failure.code) {
+        if ready && failure.domain == "VoiceFeedAudio" && [1, 2, 4, 5, 6].contains(failure.code) {
             failureReporting = true
             stopEngine()
             let report = "{\"type\":\"capture.failed\",\"code\":\"audio_\(failure.code)\"}"
@@ -239,7 +297,11 @@ final class LiveCapture: @unchecked Sendable {
         let now=Date()
         if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
-        if ready && drainStarted == nil && microphoneHealth.expired() {
+        if tapped && microphoneHealth.digitalSilence {
+            fail(NSError(domain: "VoiceFeedAudio", code: 6, userInfo: [NSLocalizedDescriptionKey: "Microphone is supplying only digital silence. Check its mute/input state; reconnecting."])); return
+        }
+        if let rotationStarted, now.timeIntervalSince(rotationStarted) > 45 { failMessage("Connection renewal timed out; capture stopped"); return }
+        if tapped && microphoneHealth.expired() {
             fail(NSError(domain: "VoiceFeedAudio", code: 5, userInfo: [NSLocalizedDescriptionKey: microphoneHealth.confirmed ? "Microphone stopped producing audio for 30 seconds" : "The selected microphone produced no audio within 10 seconds"]))
             return
         }
@@ -247,15 +309,17 @@ final class LiveCapture: @unchecked Sendable {
         if let drainStarted,now.timeIntervalSince(drainStarted)>25 { failMessage("Final words did not finish within 25 seconds"); return }
         if let pingStarted,now.timeIntervalSince(pingStarted)>10 { failMessage("Live transcription disconnected"); return }
         if ready && drainStarted == nil && now.timeIntervalSince(started)>1140 {
-            stop(); DispatchQueue.main.async(execute:onRotate); return
+            rotate(); return
         }
-        if microphoneHealth.confirmed && drainStarted == nil && now.timeIntervalSince(lastHeartbeat)>5 {
+        if ready && !rotating && microphoneHealth.confirmed && drainStarted == nil && now.timeIntervalSince(lastHeartbeat)>5 {
             lastHeartbeat=now
             packets.append(["type":"capture.heartbeat"]); pump()
         }
         if pingStarted == nil && now.timeIntervalSince(lastPing)>10 {
             lastPing=now; pingStarted=now
+            let generation = socketGeneration
             socket?.sendPing { error in self.queue.async {
+                guard !self.terminal, generation == self.socketGeneration else { return }
                 self.pingStarted=nil; if let error { self.fail(error) }
             } }
         }

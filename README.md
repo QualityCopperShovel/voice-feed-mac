@@ -154,3 +154,32 @@ the capture ID, numeric device ID, sample rate and channels in diagnostics.
 Native capture failures send a bounded, allowlisted reason to Voice Feed before
 closing, so the web status preserves the concrete failure. No device name, audio
 or arbitrary error text is uploaded. Updates remain staged until the next launch.
+
+
+## Continuous microphone and recovery audio (1.5.0)
+
+Scheduled network renewal keeps the same microphone engine and buffers up to 50
+seconds of ordered PCM during the bounded drain/reconnect operation. The old
+stream finishes before buffered audio enters the new stream; network callbacks
+from an old connection cannot fail its successor. A 45-second overall renewal
+deadline fails visibly rather than buffering indefinitely.
+
+Ten seconds of exact digital zeros is reported as an unavailable/muted input,
+not healthy listening. Quiet nonzero audio remains valid. Capture failures change
+the menu-bar icon to a crossed-out microphone and sound a rate-limited alert.
+
+The helper now keeps private one-minute WAV recovery files under
+`~/Library/Application Support/Voice Feed/Recovery Audio`, capped at 30 files
+(about 30 captured minutes). Files older than 30 minutes are removed during
+capture/startup; a stopped app cannot run expiry cleanup. The folder is 0700 and
+files are 0600. Audio is saved before speech gating or network transmission;
+valid WAV headers are updated on each write. The menu opens these recordings.
+This is a local recovery copy, not an automatic re-transcription or cloud backup.
+The server still does not retain audio. Old releases did not make these files,
+so this feature cannot recover speech lost before installation or absent from
+the microphone signal.
+
+Staged updates remain labeled **Restart to use Voice Feed <version>** until
+activation. Selecting that action drains owned audio, releases the capture lease,
+and reopens the installed bundle. Update messages no longer replace microphone
+status, and clicking a capture failure cannot turn it into a false Listening label.
