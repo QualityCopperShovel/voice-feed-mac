@@ -24,6 +24,8 @@ final class LiveCapture: @unchecked Sendable {
     private var rotationStarted: Date?
     private var configurationObserver: NSObjectProtocol?
     private var defaultMicrophoneObserver: DefaultMicrophoneObserver?
+    private var hardwareGeneration = UUID()
+    private var reconfiguration = MicrophoneReconfiguration()
     private var lastBuffer = Date()
     private var timer: DispatchSourceTimer?
     private var packets: [[String: Any]] = []
@@ -60,11 +62,12 @@ final class LiveCapture: @unchecked Sendable {
     private let onFailure: (Error) -> Void
     private let onComplete: () -> Void
     private let onRotate: () -> Void
+    private let onReconfigure: () -> Void
 
     init(token: String, connectionID: String, onReady: @escaping () -> Void,
          onFailure: @escaping (Error) -> Void, onComplete: @escaping () -> Void,
-         onRotate: @escaping () -> Void) {
-        self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate
+         onRotate: @escaping () -> Void, onReconfigure: @escaping () -> Void) {
+        self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate; self.onReconfigure=onReconfigure
         var request=URLRequest(url: URL(string: "wss://voice-feed.aisloppy.com/api/device/live")!)
         request.timeoutInterval=15
         request.setValue(captureID, forHTTPHeaderField: "X-Voice-Capture-ID")
@@ -89,7 +92,8 @@ final class LiveCapture: @unchecked Sendable {
         var input: AVAudioInputNode?
         var startError: Error?
         let converter = MicrophoneConverter()
-        recoveryAudio = try RecoveryAudio(directory: Self.recoveryDirectory)
+        if recoveryAudio == nil { recoveryAudio = try RecoveryAudio(directory: Self.recoveryDirectory) }
+        let generation = hardwareGeneration
         let nativeError = VFAudioPerform {
             let node = self.engine.inputNode; input = node
             do {
@@ -103,12 +107,15 @@ final class LiveCapture: @unchecked Sendable {
                     // Consume borrowed hardware samples before the callback returns.
                     let audio = try converter.convert(buffer)
                     self.queue.async {
-                        guard !self.terminal, !self.failureReporting else { return }
+                        guard !self.terminal, !self.failureReporting, generation == self.hardwareGeneration else { return }
                         self.maxAudioGapMs = max(self.maxAudioGapMs, Int(Date().timeIntervalSince(self.lastBuffer) * 1000))
                         self.lastBuffer = Date()
                         guard !audio.isEmpty else { return }
                         do { try self.recoveryAudio?.append(audio) }
                         catch { self.fail(NSError(domain: "VoiceFeedRecovery", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not preserve microphone audio locally. Capture stopped to avoid unprotected recording."])); return }
+                        if self.reconfiguration.expired(now: ProcessInfo.processInfo.systemUptime) {
+                            self.reconfigureMicrophone(); return
+                        }
                         let first = self.microphoneHealth.receive(pcm: audio)
                         if self.rotating {
                             do { try self.rotationBuffer.append(audio) } catch { self.fail(error) }
@@ -116,13 +123,14 @@ final class LiveCapture: @unchecked Sendable {
                         }
                         guard self.drainStarted == nil else { return }
                         if first {
+                            self.reconfiguration.receivedAudio(now: ProcessInfo.processInfo.systemUptime)
                             self.packets.append(["type": "capture.heartbeat"])
                             DispatchQueue.main.async(execute: self.onReady)
                         }
                         self.enqueue(audio)
 
                     }
-                } catch { self.queue.async { self.fail(error) } }
+                } catch { self.queue.async { if generation == self.hardwareGeneration { self.fail(error) } } }
             }
             self.tapped = true
             self.engine.prepare()
@@ -135,15 +143,29 @@ final class LiveCapture: @unchecked Sendable {
         configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
-                guard !self.terminal, !self.failureReporting else { return }
-                self.failMessage("Microphone configuration changed; reconnecting")
+                guard generation == self.hardwareGeneration else { return }
+                self.reconfigureMicrophone()
             }
         }
         defaultMicrophoneObserver = try DefaultMicrophoneObserver(queue: queue) { [weak self] in
-            guard let self, !self.terminal, !self.failureReporting, self.drainStarted == nil else { return }
-            self.fail(NSError(domain: "VoiceFeedAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Selected microphone changed; reconnecting"]))
+            guard let self, generation == self.hardwareGeneration else { return }
+            self.reconfigureMicrophone()
         }
         MacDiagnostics.shared.record("audio_engine_started")
+    }
+    private func reconfigureMicrophone() {
+        guard !terminal, !failureReporting, !stopping, drainStarted == nil else { return }
+        switch reconfiguration.changed(now: ProcessInfo.processInfo.systemUptime) {
+        case .waiting: return
+        case .failed:
+            fail(NSError(domain: "VoiceFeedAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone configuration did not stabilize. Check the selected input; reconnecting."]))
+        case .rebuild:
+            DispatchQueue.main.async(execute: onReconfigure)
+            // This runs on our queue, never Apple's notification callback queue.
+            // Keep the socket, queued packets, gate and recovery recording intact.
+            stopEngine()
+            do { try capture() } catch { fail(error) }
+        }
     }
     private func enqueue(_ audio: Data) {
         if packets.count >= 600 { failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
@@ -248,6 +270,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     func cancel() { queue.async { self.finish() } }
     private func stopEngine() {
+        hardwareGeneration = UUID()
         defaultMicrophoneObserver?.stop(); defaultMicrophoneObserver = nil
         MacDiagnostics.shared.record("audio_engine_stopping")
         if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer); configurationObserver = nil }
@@ -295,6 +318,10 @@ final class LiveCapture: @unchecked Sendable {
     private func checkDeadline() {
         guard !terminal, !failureReporting else { return }
         let now=Date()
+        if reconfiguration.expired(now: ProcessInfo.processInfo.systemUptime) {
+            fail(NSError(domain: "VoiceFeedAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone configuration changed and audio did not return within 10 seconds. Check the selected input; reconnecting."]))
+            return
+        }
         if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
         if tapped && microphoneHealth.digitalSilence {

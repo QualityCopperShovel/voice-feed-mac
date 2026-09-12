@@ -38,3 +38,32 @@ final class MicrophoneReadinessTests: XCTestCase {
         XCTAssertFalse(health.digitalSilence)
     }
 }
+
+final class MicrophoneReconfigurationTests: XCTestCase {
+    func testNotificationsCoalesceWithoutExtendingDeadline() {
+        var recovery = MicrophoneReconfiguration()
+        XCTAssertEqual(recovery.changed(now: 0), .rebuild)
+        for second in 1...9 { XCTAssertEqual(recovery.changed(now: Double(second)), .waiting) }
+        XCTAssertTrue(recovery.expired(now: 10))
+        XCTAssertEqual(recovery.changed(now: 10), .failed)
+    }
+    func testAudioRecoveryAllowsLaterChangesButBoundsFlapping() {
+        var recovery = MicrophoneReconfiguration()
+        for second in [0.0, 2.0, 4.0] {
+            XCTAssertEqual(recovery.changed(now: second), .rebuild)
+            recovery.receivedAudio(now: second + 1)
+            XCTAssertFalse(recovery.expired(now: second + 10))
+        }
+        XCTAssertEqual(recovery.changed(now: 6), .failed)
+        XCTAssertEqual(recovery.changed(now: 65), .rebuild)
+    }
+    func testIdleHasNoDeadlineAndMissingBuffersFail() {
+        var recovery = MicrophoneReconfiguration()
+        XCTAssertFalse(recovery.expired(now: 100))
+        XCTAssertEqual(recovery.changed(now: 100), .rebuild)
+        XCTAssertFalse(recovery.expired(now: 109.9))
+        XCTAssertTrue(recovery.expired(now: 110))
+        recovery.receivedAudio(now: 111)
+        XCTAssertTrue(recovery.expired(now: 111))
+    }
+}

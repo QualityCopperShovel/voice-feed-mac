@@ -21,3 +21,27 @@ public struct MicrophoneReadiness {
         now - lastBuffer > (confirmed ? 30 : 10)
     }
 }
+
+/// Coalesces route notifications without extending the first recovery deadline.
+public struct MicrophoneReconfiguration {
+    public enum Action { case rebuild, waiting, failed }
+    public private(set) var started: TimeInterval?
+    private var recovered: TimeInterval?
+    private var attempts = 0
+    public init() {}
+    public mutating func changed(now: TimeInterval) -> Action {
+        if expired(now: now) { return .failed }
+        if started != nil { return .waiting }
+        if let recovered, now - recovered >= 60 { attempts = 0 }
+        guard attempts < 3 else { return .failed }
+        attempts += 1; started = now; recovered = nil
+        return .rebuild
+    }
+    public mutating func receivedAudio(now: TimeInterval) {
+        guard started != nil, !expired(now: now) else { return }
+        started = nil; recovered = now
+    }
+    public func expired(now: TimeInterval) -> Bool {
+        started.map { now - $0 >= 10 } ?? false
+    }
+}

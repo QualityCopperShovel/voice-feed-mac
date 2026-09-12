@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.3"
+let clientVersion = "1.5.4"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -423,7 +423,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                     self.scheduleReconnect(after: NSError(domain: "VoiceFeedCapture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Capture ended"]))
                 } else { self.finishStop() }
             },
-            onRotate: { guard self.liveID == captureID else { return }; self.setStatus("Renewing connection · microphone stays active") })
+            onRotate: { guard self.liveID == captureID else { return }; self.setStatus("Renewing connection · microphone stays active") },
+            onReconfigure: { guard self.liveID == captureID else { return }; self.setStatus("Microphone changed · restoring audio…") })
         live?.start()
     }
     @objc func stopListening() {

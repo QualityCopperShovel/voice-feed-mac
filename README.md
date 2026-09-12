@@ -206,3 +206,13 @@ A closed lid disconnects built-in microphones on Apple silicon and T2 MacBooks
 in hardware: https://support.apple.com/en-euro/guide/security/secbbd20b00b/web .
 The helper cannot recover audio the microphone never supplied. Opening the lid
 or selecting an available external microphone lets subsequent attempts recover.
+
+### Audio configuration changes (1.5.4)
+
+Hardware configuration changes rebuild the microphone tap on the audio queue
+while retaining the transcription socket, queued audio and local recovery writer.
+Audio must return within ten seconds; notifications cannot extend that deadline.
+Three local rebuilds are allowed until input remains stable for one minute.
+Stop, stale callbacks and network drain cannot resurrect the microphone. Exhausted
+recovery reports the existing native audio_1 failure before releasing the stream.
+Apple's lifecycle contract: https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/avaudioengineconfigurationchange .
