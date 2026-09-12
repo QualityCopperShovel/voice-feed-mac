@@ -163,7 +163,7 @@ final class LiveCapture: @unchecked Sendable {
             DispatchQueue.main.async(execute: onReconfigure)
             // This runs on our queue, never Apple's notification callback queue.
             // Keep the socket, queued packets, gate and recovery recording intact.
-            stopEngine()
+            stopEngine(invalidateCallbacks: true)
             do { try capture() } catch { fail(error) }
         }
     }
@@ -269,8 +269,8 @@ final class LiveCapture: @unchecked Sendable {
         }
     }
     func cancel() { queue.async { self.finish() } }
-    private func stopEngine() {
-        hardwareGeneration = UUID()
+    private func stopEngine(invalidateCallbacks: Bool = false) {
+        if invalidateCallbacks { hardwareGeneration = UUID() }
         defaultMicrophoneObserver?.stop(); defaultMicrophoneObserver = nil
         MacDiagnostics.shared.record("audio_engine_stopping")
         if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer); configurationObserver = nil }
