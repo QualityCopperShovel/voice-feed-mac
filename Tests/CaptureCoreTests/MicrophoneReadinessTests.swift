@@ -21,15 +21,18 @@ final class MicrophoneReadinessTests: XCTestCase {
         XCTAssertFalse(retry.confirmed)
         XCTAssertTrue(retry.expired(now: 147))
     }
-    func testContinuousZeroBuffersFailWithoutReportingListening() {
+    func testContinuousZeroBuffersStayAliveAndSpeechResumesWithoutRestart() {
         var health = MicrophoneReadiness(now: 0)
-        for second in 1...10 {
-            XCTAssertFalse(health.receive(pcm: Data(repeating: 0, count: 48000), now: Double(second)))
+        for second in 1...180 {
+            XCTAssertEqual(health.receive(pcm: Data(repeating: 0, count: 48000), now: Double(second)), second == 1)
+            XCTAssertFalse(health.expired(now: Double(second)))
         }
-        XCTAssertFalse(health.confirmed)
+        XCTAssertTrue(health.confirmed)
         XCTAssertTrue(health.digitalSilence)
-        XCTAssertTrue(health.receive(pcm: Data([1, 0]), now: 11))
+        XCTAssertFalse(health.receive(pcm: Data([1, 0]), now: 181))
         XCTAssertFalse(health.digitalSilence)
+        XCTAssertTrue(health.confirmed)
+        XCTAssertTrue(health.expired(now: 212))
     }
     func testQuietNonzeroInputIsNotMistakenForDisconnectedHardware() {
         var health = MicrophoneReadiness(now: 0)

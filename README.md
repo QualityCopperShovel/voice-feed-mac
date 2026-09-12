@@ -223,3 +223,9 @@ Show capture details opens a selectable, wrapped snapshot of the full current
 status and most recent failure, with its timestamp and a Copy button. Capture
 continues while the dialog is open; background status changes cannot overwrite
 its text selection. The compact menu summary remains bounded.
+
+1.5.5 also separates callback liveness from signal level. Continuous zero-valued
+buffers keep capture alive with a visible waiting-for-sound status. Speech can
+resume through the same gate/connection; silence alone cannot cause an alarm or
+restart. Missing callbacks, network loss and unstable configuration retain their
+existing deadlines. Zero input still warrants checking mute/input/lid if speaking.

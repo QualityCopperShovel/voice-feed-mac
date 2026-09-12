@@ -51,6 +51,7 @@ final class LiveCapture: @unchecked Sendable {
     private var drainStarted: Date?
     private var ready = false
     private var microphoneHealth = MicrophoneReadiness()
+    private var inputSilent = false
     private var failureReporting = false
     private var finishFailure: (() -> Void)?
     private var terminal = false
@@ -63,11 +64,12 @@ final class LiveCapture: @unchecked Sendable {
     private let onComplete: () -> Void
     private let onRotate: () -> Void
     private let onReconfigure: () -> Void
+    private let onInputSilence: (Bool) -> Void
 
     init(token: String, connectionID: String, onReady: @escaping () -> Void,
          onFailure: @escaping (Error) -> Void, onComplete: @escaping () -> Void,
-         onRotate: @escaping () -> Void, onReconfigure: @escaping () -> Void) {
-        self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate; self.onReconfigure=onReconfigure
+         onRotate: @escaping () -> Void, onReconfigure: @escaping () -> Void, onInputSilence: @escaping (Bool) -> Void) {
+        self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate; self.onReconfigure=onReconfigure; self.onInputSilence=onInputSilence
         var request=URLRequest(url: URL(string: "wss://voice-feed.aisloppy.com/api/device/live")!)
         request.timeoutInterval=15
         request.setValue(captureID, forHTTPHeaderField: "X-Voice-Capture-ID")
@@ -139,7 +141,7 @@ final class LiveCapture: @unchecked Sendable {
         if let error = (nativeError as Error?) ?? startError { throw error }
         guard input != nil else { throw NSError(domain:"VoiceFeedAudio", code:2) }
         lastBuffer = Date()
-        microphoneHealth = MicrophoneReadiness()
+        microphoneHealth = MicrophoneReadiness(); inputSilent = false
         configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
@@ -324,8 +326,10 @@ final class LiveCapture: @unchecked Sendable {
         }
         if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
-        if tapped && microphoneHealth.digitalSilence {
-            fail(NSError(domain: "VoiceFeedAudio", code: 6, userInfo: [NSLocalizedDescriptionKey: "Microphone is supplying only digital silence. Open the MacBook lid if using its built-in microphone, or check the selected input and mute state."])); return
+        if tapped && microphoneHealth.confirmed && inputSilent != microphoneHealth.digitalSilence {
+            inputSilent = microphoneHealth.digitalSilence
+            let silent = inputSilent
+            DispatchQueue.main.async { self.onInputSilence(silent) }
         }
         if let rotationStarted, now.timeIntervalSince(rotationStarted) > 45 { failMessage("Connection renewal timed out; capture stopped"); return }
         if tapped && microphoneHealth.expired() {

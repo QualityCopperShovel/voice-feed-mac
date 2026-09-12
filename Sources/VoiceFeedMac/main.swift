@@ -225,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         statusItem.button?.image = voiceFeedStatusImage()
         statusItem.button?.image?.accessibilityDescription = "Voice Feed"
         let devices = NSMenuItem(title: "Open Devices…", action: #selector(openDevices), keyEquivalent: ""), quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        [status, connect, update, devices, quitItem].forEach { $0.target = self }
+        [status, captureDetails, connect, update, devices, quitItem].forEach { $0.target = self }
         status.action = nil
         loginItem.target = self
         let menu = NSMenu(); [status, captureDetails, .separator(), connect, .separator(), loginItem, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
@@ -448,7 +448,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 } else { self.finishStop() }
             },
             onRotate: { guard self.liveID == captureID else { return }; self.setStatus("Renewing connection · microphone stays active") },
-            onReconfigure: { guard self.liveID == captureID else { return }; self.setStatus("Microphone changed · restoring audio…") })
+            onReconfigure: { guard self.liveID == captureID else { return }; self.setStatus("Microphone changed · restoring audio…") },
+            onInputSilence: { silent in guard self.liveID == captureID else { return }; self.setStatus(silent ? "No input signal · waiting for sound. If you are speaking, check the selected microphone, mute state, and MacBook lid." : "Listening") })
         live?.start()
     }
     @objc func stopListening() {
