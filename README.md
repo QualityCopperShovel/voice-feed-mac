@@ -194,3 +194,15 @@ from 16 to 1024 pixels. The editable source is `Resources/AppIcon.svg`; regenera
 the committed PNG and ICNS with `python3 scripts/build_icon.py` (CairoSVG required
 only for artwork development). All installation and signing paths package the
 same icon before signing.
+
+### Recovery alarms (1.5.3)
+
+Repeated microphone failures retain exponential backoff (up to 30 seconds)
+through brief successful buffers. One alarm marks a capture interruption; another
+is armed only after at least 60 seconds of uninterrupted confirmed capture. Sleep
+and stopped capture do not sound an alarm. Recovery stays automatic.
+
+A closed lid disconnects built-in microphones on Apple silicon and T2 MacBooks
+in hardware: https://support.apple.com/en-euro/guide/security/secbbd20b00b/web .
+The helper cannot recover audio the microphone never supplied. Opening the lid
+or selecting an available external microphone lets subsequent attempts recover.

@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.2"
+let clientVersion = "1.5.3"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -155,7 +155,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var quitting = false
     private var drainCompletion: UpdateRelaunch.Completion?
     private var resumeAfterUpdate = false
-    private var lastCaptureAlarm = Date.distantPast
     var recovery = CaptureRecovery()
     var liveID = UUID()
     var workspaceObservers: [NSObjectProtocol] = []
@@ -388,16 +387,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     func scheduleReconnect(after error: Error) {
         MacDiagnostics.shared.failure("capture_reconnect", error)
         statusItem.button?.image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone capture failed")
-        if hasEstablishedLease && Date().timeIntervalSince(lastCaptureAlarm) > 60 {
-            NSSound.beep(); lastCaptureAlarm = Date()
-        }
         guard desiredListening, !recovery.sleeping else { return }
+        let retry = recovery.captureFailed()
+        if retry.alarm { NSSound.beep() }
         let failure = error as NSError
         if failure.domain == "VoiceFeed" && [401, 410, 422].contains(failure.code) {
             desiredListening = false; stopCapture(); api.token = nil; refreshMenu(); setStatus(error.localizedDescription); return
         }
-        stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt += 1
-        let delay = CaptureRecovery.retryDelay(attempt: reconnectAttempt)
+        stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt = recovery.retryAttempt
+        let delay = retry.delay
         if hasEstablishedLease {
             setStatus("\(error.localizedDescription). Retrying in \(Int(delay))s…")
         } else if reconnectAttempt <= 2 {
@@ -413,7 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let captureID = UUID(); liveID = captureID
         setStatus("Connecting live transcription…")
         live=LiveCapture(token:token,connectionID:connectionID,
-            onReady: { guard self.liveID == captureID, self.desiredListening else { return }; self.reconnectAttempt = 0; self.statusItem.button?.image = voiceFeedStatusImage(); self.setStatus("Listening") },
+            onReady: { guard self.liveID == captureID, self.desiredListening else { return }; self.recovery.captureReady(); self.statusItem.button?.image = voiceFeedStatusImage(); self.setStatus("Listening") },
             onFailure: { error in
                 guard self.liveID == captureID else { return }
                 if self.desiredListening { self.scheduleReconnect(after:error) }

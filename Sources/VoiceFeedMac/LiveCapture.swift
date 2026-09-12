@@ -298,7 +298,7 @@ final class LiveCapture: @unchecked Sendable {
         if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
         if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
         if tapped && microphoneHealth.digitalSilence {
-            fail(NSError(domain: "VoiceFeedAudio", code: 6, userInfo: [NSLocalizedDescriptionKey: "Microphone is supplying only digital silence. Check its mute/input state; reconnecting."])); return
+            fail(NSError(domain: "VoiceFeedAudio", code: 6, userInfo: [NSLocalizedDescriptionKey: "Microphone is supplying only digital silence. Open the MacBook lid if using its built-in microphone, or check the selected input and mute state."])); return
         }
         if let rotationStarted, now.timeIntervalSince(rotationStarted) > 45 { failMessage("Connection renewal timed out; capture stopped"); return }
         if tapped && microphoneHealth.expired() {
