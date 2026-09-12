@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.4"
+let clientVersion = "1.5.5"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -155,6 +155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var quitting = false
     private var drainCompletion: UpdateRelaunch.Completion?
     private var resumeAfterUpdate = false
+    private var fullCaptureStatus = "Starting…"
+    private var lastCaptureFailure: String?
+    private let captureDetails = NSMenuItem(title: "Show capture details…", action: #selector(showCaptureDetails), keyEquivalent: "")
     var recovery = CaptureRecovery()
     var liveID = UUID()
     var workspaceObservers: [NSObjectProtocol] = []
@@ -225,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         [status, connect, update, devices, quitItem].forEach { $0.target = self }
         status.action = nil
         loginItem.target = self
-        let menu = NSMenu(); [status, .separator(), connect, .separator(), loginItem, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        let menu = NSMenu(); [status, captureDetails, .separator(), connect, .separator(), loginItem, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification, object:nil, queue:.main) { [weak self] _ in self?.willSleep() })
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didWakeNotification, object:nil, queue:.main) { [weak self] _ in self?.didWake() })
         api.token = keychain.load(); refreshMenu()
@@ -283,7 +286,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         if (try? bootout.run()) != nil { bootout.waitUntilExit() }
         try? manager.removeItem(at: legacyLaunchAgent)
     }
-    func applyStatus(_ text: String) { statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
+    func applyStatus(_ text: String) { fullCaptureStatus = text; statusRevision += 1; let oneLine = text.replacingOccurrences(of: "\n", with: " "), limit = 56; status.title = oneLine.count > limit ? String(oneLine.prefix(limit - 1)) + "…" : oneLine; refreshMenu() }
+    @objc func showCaptureDetails() {
+        // Snapshot once: capture updates must not replace selected/copied text.
+        let snapshot = "Current status\n" + fullCaptureStatus + (lastCaptureFailure.map { "\n\nMost recent failure\n" + $0 } ?? "")
+        let alert = NSAlert()
+        alert.messageText = "Voice Feed capture details"
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 440, height: 190))
+        scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
+        let text = NSTextView(frame: scroll.bounds)
+        text.isEditable = false; text.isSelectable = true
+        text.font = NSFont.systemFont(ofSize: 13)
+        text.textColor = .textColor; text.backgroundColor = .textBackgroundColor
+        text.isVerticallyResizable = true; text.isHorizontallyResizable = false
+        text.autoresizingMask = [.width]
+        text.textContainer?.widthTracksTextView = true
+        text.string = snapshot; scroll.documentView = text; alert.accessoryView = scroll
+        alert.addButton(withTitle: "Close"); alert.addButton(withTitle: "Copy")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(snapshot, forType: .string)
+        }
+    }
     func setStatus(_ text: String) { DispatchQueue.main.async { self.applyStatus(text) } }
     func setUpdateStatus(_ text: String) { DispatchQueue.main.async {
         guard !self.relaunch.running, self.relaunch.state != .failed else { return }
@@ -385,6 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
     }
     func scheduleReconnect(after error: Error) {
+        lastCaptureFailure = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium) + "\n" + error.localizedDescription
         MacDiagnostics.shared.failure("capture_reconnect", error)
         statusItem.button?.image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone capture failed")
         guard desiredListening, !recovery.sleeping else { return }

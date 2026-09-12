@@ -216,3 +216,10 @@ Three local rebuilds are allowed until input remains stable for one minute.
 Stop, stale callbacks and network drain cannot resurrect the microphone. Exhausted
 recovery reports the existing native audio_1 failure before releasing the stream.
 Apple's lifecycle contract: https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/avaudioengineconfigurationchange .
+
+### Readable capture details (1.5.5)
+
+Show capture details opens a selectable, wrapped snapshot of the full current
+status and most recent failure, with its timestamp and a Copy button. Capture
+continues while the dialog is open; background status changes cannot overwrite
+its text selection. The compact menu summary remains bounded.
