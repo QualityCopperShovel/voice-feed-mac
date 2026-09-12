@@ -18,6 +18,11 @@ final class LiveCapture: @unchecked Sendable {
     private let socketRequest: URLRequest
     private var socketGeneration = UUID()
     private var backendHandoff = BackendHandoff()
+    private var transportRecovery = TransportRecovery()
+    private let recoveryAPI = API()
+    private var leaseRequest: URLSessionDataTask?
+    private let connectionID: String
+    private let onNetworkStatus: (String) -> Void
     private var rotating = false
     private var stopping = false
     private var recoveryAudio: RecoveryAudio?
@@ -49,6 +54,7 @@ final class LiveCapture: @unchecked Sendable {
     private var sending = false
     private var sendStarted = Date()
     private var started = Date()
+    private var connectedAt: TimeInterval = 0
     private var drainStarted: Date?
     private var ready = false
     private var microphoneHealth = MicrophoneReadiness()
@@ -69,7 +75,8 @@ final class LiveCapture: @unchecked Sendable {
 
     init(token: String, connectionID: String, onReady: @escaping () -> Void,
          onFailure: @escaping (Error) -> Void, onComplete: @escaping () -> Void,
-         onRotate: @escaping () -> Void, onReconfigure: @escaping () -> Void, onInputSilence: @escaping (Bool) -> Void) {
+         onNetworkStatus: @escaping (String) -> Void, onRotate: @escaping () -> Void, onReconfigure: @escaping () -> Void, onInputSilence: @escaping (Bool) -> Void) {
+        self.connectionID = connectionID; self.onNetworkStatus = onNetworkStatus; self.recoveryAPI.token = token
         self.onReady=onReady; self.onFailure=onFailure; self.onComplete=onComplete; self.onRotate=onRotate; self.onReconfigure=onReconfigure; self.onInputSilence=onInputSilence
         var request=URLRequest(url: URL(string: "wss://voice-feed.aisloppy.com/api/device/live")!)
         request.timeoutInterval=15
@@ -120,13 +127,13 @@ final class LiveCapture: @unchecked Sendable {
                             self.reconfigureMicrophone(); return
                         }
                         let first = self.microphoneHealth.receive(pcm: audio)
+                        if first { self.reconfiguration.receivedAudio(now: ProcessInfo.processInfo.systemUptime) }
                         if self.rotating {
                             do { try self.rotationBuffer.append(audio) } catch { self.fail(error) }
                             return
                         }
                         guard self.drainStarted == nil else { return }
                         if first {
-                            self.reconfiguration.receivedAudio(now: ProcessInfo.processInfo.systemUptime)
                             self.packets.append(["type": "capture.heartbeat"])
                             DispatchQueue.main.async(execute: self.onReady)
                         }
@@ -200,6 +207,49 @@ final class LiveCapture: @unchecked Sendable {
         DispatchQueue.main.async(execute: onRotate)
         pump()
     }
+    func handleLeaseFailure(_ error: Error, requestStarted: TimeInterval) {
+        queue.async {
+            if TransportRecovery.retryable(error) && (self.transportRecovery.active || requestStarted < self.connectedAt) { return }
+            self.recoverTransport(error, stage: "lease")
+        }
+    }
+    private func recoverTransport(_ error: Error, stage: String) {
+        guard !terminal, !failureReporting else { return }
+        guard TransportRecovery.retryable(error), tapped || rotating else { fail(error); return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let remaining = rotationStarted.map { now + max(0, 45 - Date().timeIntervalSince($0)) }
+        transportRecovery.interrupted(now: now, deadline: remaining)
+        rotating = true
+        if rotationStarted == nil { rotationStarted = Date() }
+        // A failed send may have reached the server. Never replay that removed
+        // in-flight packet; retain definitely-unsent packets and new raw audio.
+        socketGeneration = UUID()
+        leaseRequest?.cancel(); leaseRequest = nil
+        socket?.cancel(with: .goingAway, reason: nil); socket = nil
+        ready = false; sending = false; drainStarted = nil; stopSent = false; pingStarted = nil
+        var fields = DiagnosticEvidence.failure(error)
+        fields["capture_id"] = captureID; fields["stage"] = "network_" + stage
+        MacDiagnostics.shared.record("capture_rotation", fields: fields)
+        DispatchQueue.main.async { self.onNetworkStatus("Reconnecting · microphone stays active. Words at the disconnect may be incomplete; recent audio is kept locally.") }
+    }
+    private func beginNetworkAttempt() {
+        let generation = socketGeneration
+        leaseRequest = recoveryAPI.request("/api/device/lease", method: "POST", json: ["connection_id": connectionID]) { result in
+            self.queue.async {
+                guard !self.terminal, generation == self.socketGeneration, self.transportRecovery.active else { return }
+                self.leaseRequest = nil
+                switch result {
+                case .failure(let error): self.recoverTransport(error, stage: "lease_acquire")
+                case .success(let response):
+                    guard response["connection_id"] as? String == self.connectionID,
+                          let expiry = response["expires_at"] as? Double, expiry > Date().timeIntervalSince1970 else {
+                        self.failMessage("Invalid capture lease response during network recovery"); return
+                    }
+                    self.reconnectSocket()
+                }
+            }
+        }
+    }
     private func reconnectSocket() {
         socket?.cancel(with: .normalClosure, reason: nil)
         socketGeneration = UUID()
@@ -209,7 +259,7 @@ final class LiveCapture: @unchecked Sendable {
         socket?.resume(); receive()
     }
     private func pump() {
-        guard !terminal, !failureReporting, !sending else { return }
+        guard ready, !terminal, !failureReporting, !sending else { return }
         let event:[String:Any]
         if !packets.isEmpty {
             event=packets.removeFirst()
@@ -225,7 +275,7 @@ final class LiveCapture: @unchecked Sendable {
                     guard !self.terminal, generation == self.socketGeneration else { return }
                     self.maxSendMs = max(self.maxSendMs, Int(Date().timeIntervalSince(self.sendStarted) * 1000))
                     self.sending=false
-                    if let error { self.fail(error) } else { self.pump() }
+                    if let error { self.recoverTransport(error, stage: "send") } else { self.pump() }
                 }
             }
         } catch { fail(error) }
@@ -236,7 +286,11 @@ final class LiveCapture: @unchecked Sendable {
             self.queue.async {
                 guard !self.terminal, generation == self.socketGeneration else { return }
                 do {
-                    let message=try result.get()
+                    let message: URLSessionWebSocketTask.Message
+                    switch result {
+                    case .success(let value): message = value
+                    case .failure(let error): self.recoverTransport(error, stage: "receive"); return
+                    }
                     let data:Data
                     switch message {
                     case .string(let text): data=Data(text.utf8)
@@ -247,23 +301,33 @@ final class LiveCapture: @unchecked Sendable {
                         self.failMessage("Invalid live transcription response"); return
                     }
                     if type == "ready" && !self.ready {
+                        self.connectedAt = ProcessInfo.processInfo.systemUptime
                         self.backendHandoff.connected(revision: try BackendHandoff.revision(in: event), at: ProcessInfo.processInfo.systemUptime)
                         self.ready = true
                         if self.rotating {
+                            let recoveredNetwork = self.transportRecovery.active
+                            self.transportRecovery.complete()
                             self.rotating = false; self.rotationStarted = nil
                             MacDiagnostics.shared.record("capture_rotation", fields: ["capture_id": self.captureID, "stage": "completed"])
                             if self.microphoneHealth.confirmed { self.packets.append(["type": "capture.heartbeat"]) }
                             for frame in self.rotationBuffer.take() { self.enqueue(frame) }
                             if self.microphoneHealth.confirmed && !self.stopping { DispatchQueue.main.async(execute: self.onReady) }
+                            if recoveredNetwork && !self.stopping {
+                                DispatchQueue.main.async { self.onNetworkStatus("Connection restored · microphone stayed active. Review the last words if needed; recent audio is kept locally.") }
+                            }
                             if self.stopping { self.drainStarted = Date() }
                             self.pump()
                         } else if self.drainStarted == nil { try self.capture() }
+                        self.pump()
                     } else if type == "capture.failure_received" && self.failureReporting {
                         self.finishFailure?(); return
                     } else if type == "completed" {
                         if self.rotating { self.reconnectSocket(); return }
                         self.finish(); DispatchQueue.main.async(execute:self.onComplete); return
                     } else if type == "error" {
+                        if self.transportRecovery.active, (event["error"] as? [String:Any])?["code"] as? String == "stream_busy" {
+                            self.recoverTransport(NSError(domain:"VoiceFeed", code:409, userInfo:["voiceFeedCode":"stream_busy"]), stage:"stream_busy"); return
+                        }
                         self.failMessage((event["error"] as? [String:Any])?["message"] as? String ?? "Live transcription failed"); return
                     }
                     self.receive()
@@ -298,6 +362,7 @@ final class LiveCapture: @unchecked Sendable {
     }
     private func finish() {
         guard !terminal else { return }; terminal=true; finishFailure=nil
+        socketGeneration = UUID(); leaseRequest?.cancel(); leaseRequest = nil; transportRecovery.complete()
         recordDiagnostics("capture_end")
         stopEngine(); timer?.cancel(); timer=nil; packets.removeAll()
         do { try recoveryAudio?.close() } catch { MacDiagnostics.shared.failure("capture_failed", error) }
@@ -339,8 +404,18 @@ final class LiveCapture: @unchecked Sendable {
             return
         }
         if ready && now.timeIntervalSince(lastDiagnostic) >= 30 { recordDiagnostics("periodic") }
-        if !ready && now.timeIntervalSince(started)>20 { failMessage("Live transcription did not connect within 20 seconds"); return }
-        if tapped && microphoneHealth.confirmed && inputSilent != microphoneHealth.digitalSilence {
+        if transportRecovery.expired(now: ProcessInfo.processInfo.systemUptime) {
+            failMessage("Network recovery timed out after 45 seconds. Capture stopped; recent audio is available locally."); return
+        }
+        if transportRecovery.active {
+            if let attempt = transportRecovery.attemptStarted, leaseRequest != nil,
+               ProcessInfo.processInfo.systemUptime - attempt >= 15 {
+                recoverTransport(URLError(.timedOut), stage: "lease_timeout"); return
+            }
+            if transportRecovery.beginAttempt(now: ProcessInfo.processInfo.systemUptime) { beginNetworkAttempt() }
+        }
+        if !ready && socket != nil && now.timeIntervalSince(started)>20 { recoverTransport(URLError(.timedOut), stage: "connect_timeout"); return }
+        if tapped && !rotating && microphoneHealth.confirmed && inputSilent != microphoneHealth.digitalSilence {
             inputSilent = microphoneHealth.digitalSilence
             let silent = inputSilent
             DispatchQueue.main.async { self.onInputSilence(silent) }
@@ -350,9 +425,9 @@ final class LiveCapture: @unchecked Sendable {
             fail(NSError(domain: "VoiceFeedAudio", code: 5, userInfo: [NSLocalizedDescriptionKey: microphoneHealth.confirmed ? "Microphone stopped producing audio for 30 seconds" : "The selected microphone produced no audio within 10 seconds"]))
             return
         }
-        if sending && now.timeIntervalSince(sendStarted)>10 { failMessage("Audio upload timed out"); return }
+        if sending && now.timeIntervalSince(sendStarted)>10 { recoverTransport(URLError(.timedOut), stage: "send_timeout"); return }
         if let drainStarted,now.timeIntervalSince(drainStarted)>25 { failMessage("Final words did not finish within 25 seconds"); return }
-        if let pingStarted,now.timeIntervalSince(pingStarted)>10 { failMessage("Live transcription disconnected"); return }
+        if let pingStarted,now.timeIntervalSince(pingStarted)>10 { recoverTransport(URLError(.timedOut), stage: "ping_timeout"); return }
         if ready && drainStarted == nil && now.timeIntervalSince(started)>1140 {
             rotate(); return
         }
@@ -360,12 +435,12 @@ final class LiveCapture: @unchecked Sendable {
             lastHeartbeat=now
             packets.append(["type":"capture.heartbeat"]); pump()
         }
-        if pingStarted == nil && now.timeIntervalSince(lastPing)>10 {
+        if socket != nil && pingStarted == nil && now.timeIntervalSince(lastPing)>10 {
             lastPing=now; pingStarted=now
             let generation = socketGeneration
             socket?.sendPing { error in self.queue.async {
                 guard !self.terminal, generation == self.socketGeneration else { return }
-                self.pingStarted=nil; if let error { self.fail(error) }
+                self.pingStarted=nil; if let error { self.recoverTransport(error, stage: "ping") }
             } }
         }
     }

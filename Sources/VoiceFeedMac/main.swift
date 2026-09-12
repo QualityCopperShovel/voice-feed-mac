@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.6"
+let clientVersion = "1.5.7"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -131,17 +131,20 @@ final class Keychain {
 final class API {
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 40; return URLSession(configuration: config) }()
     var token: String?
-    func request(_ path: String, method: String = "GET", json: [String: Any]? = nil, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+    @discardableResult
+    func request(_ path: String, method: String = "GET", json: [String: Any]? = nil, completion: @escaping (Result<[String: Any], Error>) -> Void) -> URLSessionDataTask {
         var request = URLRequest(url: URL(string: path, relativeTo: baseURL)!); request.httpMethod = method; request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type"); if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let json { request.httpBody = try? JSONSerialization.data(withJSONObject: json) }
-        session.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
             if let error { completion(.failure(error)); return }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let object = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]) ?? [:]
-            if !(200..<300).contains(status) { completion(.failure(NSError(domain: "VoiceFeed", code: status, userInfo: [NSLocalizedDescriptionKey: object["error"] as? String ?? "HTTP \(status)"]))); return }
+            if !(200..<300).contains(status) { completion(.failure(NSError(domain: "VoiceFeed", code: status, userInfo: [NSLocalizedDescriptionKey: object["error"] as? String ?? "HTTP \(status)", "voiceFeedCode": object["code"] as? String ?? ""]))); return }
             completion(.success(object))
-        }.resume()
+        }
+        task.resume()
+        return task
     }
 
 }
@@ -406,7 +409,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 guard self.recovery.accepts(ticket) else { return }
                 self.leaseRenewalInFlight = false
                 switch result {
-                case .failure(let error): self.scheduleReconnect(after: error)
+                case .failure(let error):
+                    if let capture { capture.handleLeaseFailure(error, requestStarted: requestStarted) }
+                    else { self.scheduleReconnect(after: error) }
                 case .success(let response): capture?.observeBackend(response, requestStarted: requestStarted)
                 }
             }
@@ -451,6 +456,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 if self.desiredListening {
                     self.scheduleReconnect(after: NSError(domain: "VoiceFeedCapture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Capture ended"]))
                 } else { self.finishStop() }
+            },
+            onNetworkStatus: { message in
+                guard self.liveID == captureID else { return }
+                self.lastCaptureFailure = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium) + "\n" + message
+                self.setStatus(message)
             },
             onRotate: { guard self.liveID == captureID else { return }; self.setStatus("Renewing connection · microphone stays active") },
             onReconfigure: { guard self.liveID == captureID else { return }; self.setStatus("Microphone changed · restoring audio…") },

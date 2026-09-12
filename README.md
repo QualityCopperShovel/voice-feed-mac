@@ -247,3 +247,23 @@ Diagnostics retain `capture_rotation` stages `backend_deployed`, `scheduled`, an
 `completed` with the same capture ID. This client update itself still uses the
 existing verified application relaunch; subsequent backend updates do not restart
 the audio engine.
+
+### Brief transport failures (1.5.7)
+
+Known transient socket, URL-loading, and lease-expiry errors recover inside the
+current capture instance. The microphone and local recovery writer continue;
+definitely-unsent packets and newly captured frames remain ordered. The client
+reacquires its existing device lease, waits with bounded backoff if the previous
+stream is still draining, and reconnects. One 45-second deadline includes lease
+requests, connection attempts, retries and any earlier deployment handoff; retries
+do not extend it. A stalled lease request is cancelled after 15 seconds, a socket
+setup after 20, and sends/pings after 10. Buffer overflow and overall timeout fail
+visibly. Stop drains buffered audio; Quit/sleep cancel owned requests and callbacks.
+
+An in-flight send has uncertain delivery without an acknowledgement. It is not
+replayed automatically because that could duplicate dictated text. The menu and
+capture details retain a warning to review the interrupted words, with the existing
+local recovery recording available. Authentication revocation, explicit feed-off,
+lease conflicts and hardware failures are not treated as transient transport errors.
+`capture_rotation` diagnostics distinguish `network_receive`, `network_send`,
+`network_ping`, lease/timeout/busy stages, and `completed`, with one capture ID.
