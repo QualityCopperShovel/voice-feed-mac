@@ -86,7 +86,7 @@ class UpdateContractTests(unittest.TestCase):
 
     def test_network_rotation_does_not_stop_the_microphone(self):
         source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
-        rotation = source[source.index('private func rotate()'):source.index('private func reconnectSocket()')]
+        rotation = source[source.index('private func rotate(stage:'):source.index('private func reconnectSocket()')]
         self.assertNotIn('stopEngine', rotation)
         self.assertNotIn('stop()', rotation)
         self.assertIn('rotationBuffer.append(audio)', source)

@@ -229,3 +229,21 @@ buffers keep capture alive with a visible waiting-for-sound status. Speech can
 resume through the same gate/connection; silence alone cannot cause an alarm or
 restart. Missing callbacks, network loss and unstable configuration retain their
 existing deadlines. Zero input still warrants checking mute/input/lid if speaking.
+
+### Backend deployment handoff (1.5.6)
+
+The ready event identifies the backend attached to the audio socket. Successful
+20-second capture lease renewals identify the backend currently serving new
+connections. A changed revision triggers the existing 45-second bounded rotation:
+the microphone and local recovery writer stay alive, new frames enter the ordered
+rotation buffer, the old connection drains, and buffered frames go to its successor.
+No silence boundary is required. Text may briefly lag and a word spanning the
+provider boundary may transcribe differently. Duplicate and stale lease replies
+cannot restart a completed handoff. Stop, sleep, transport failure and buffer
+limits retain their explicit terminal behavior. A legacy backend without revision
+metadata continues scheduled renewal; invalid metadata is a visible error.
+
+Diagnostics retain `capture_rotation` stages `backend_deployed`, `scheduled`, and
+`completed` with the same capture ID. This client update itself still uses the
+existing verified application relaunch; subsequent backend updates do not restart
+the audio engine.

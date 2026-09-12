@@ -17,6 +17,7 @@ final class LiveCapture: @unchecked Sendable {
     private var socket: URLSessionWebSocketTask?
     private let socketRequest: URLRequest
     private var socketGeneration = UUID()
+    private var backendHandoff = BackendHandoff()
     private var rotating = false
     private var stopping = false
     private var recoveryAudio: RecoveryAudio?
@@ -181,10 +182,21 @@ final class LiveCapture: @unchecked Sendable {
         pump()
     }
     /// Network rotation never owns the hardware lifetime.
-    private func rotate() {
+    func observeBackend(_ response: [String: Any], requestStarted: TimeInterval) {
+        queue.async {
+            guard self.ready, !self.rotating, !self.stopping, !self.terminal,
+                  !self.failureReporting, self.drainStarted == nil else { return }
+            do {
+                if self.backendHandoff.observe(revision: try BackendHandoff.revision(in: response), requestStarted: requestStarted) {
+                    self.rotate(stage: "backend_deployed")
+                }
+            } catch { self.fail(error) }
+        }
+    }
+    private func rotate(stage: String = "scheduled") {
         guard !rotating, drainStarted == nil, !terminal else { return }
         rotating = true; rotationStarted = Date(); drainStarted = Date()
-        MacDiagnostics.shared.record("capture_rotation", fields: ["capture_id": captureID])
+        MacDiagnostics.shared.record("capture_rotation", fields: ["capture_id": captureID, "stage": stage])
         DispatchQueue.main.async(execute: onRotate)
         pump()
     }
@@ -235,9 +247,11 @@ final class LiveCapture: @unchecked Sendable {
                         self.failMessage("Invalid live transcription response"); return
                     }
                     if type == "ready" && !self.ready {
+                        self.backendHandoff.connected(revision: try BackendHandoff.revision(in: event), at: ProcessInfo.processInfo.systemUptime)
                         self.ready = true
                         if self.rotating {
                             self.rotating = false; self.rotationStarted = nil
+                            MacDiagnostics.shared.record("capture_rotation", fields: ["capture_id": self.captureID, "stage": "completed"])
                             if self.microphoneHealth.confirmed { self.packets.append(["type": "capture.heartbeat"]) }
                             for frame in self.rotationBuffer.take() { self.enqueue(frame) }
                             if self.microphoneHealth.confirmed && !self.stopping { DispatchQueue.main.async(execute: self.onReady) }

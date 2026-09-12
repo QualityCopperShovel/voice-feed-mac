@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.5"
+let clientVersion = "1.5.6"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -399,11 +399,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         guard listening, !leaseRenewalInFlight else { return }
         leaseRenewalInFlight = true
         let ticket = recovery.generation
+        let capture = live
+        let requestStarted = ProcessInfo.processInfo.systemUptime
         api.request("/api/device/lease/\(connectionID)", method: "PUT") { result in
             DispatchQueue.main.async {
                 guard self.recovery.accepts(ticket) else { return }
                 self.leaseRenewalInFlight = false
-                if case .failure(let error) = result { self.scheduleReconnect(after: error) }
+                switch result {
+                case .failure(let error): self.scheduleReconnect(after: error)
+                case .success(let response): capture?.observeBackend(response, requestStarted: requestStarted)
+                }
             }
         }
     }
