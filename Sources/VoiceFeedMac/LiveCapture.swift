@@ -230,7 +230,8 @@ final class LiveCapture: @unchecked Sendable {
         var fields = DiagnosticEvidence.failure(error)
         fields["capture_id"] = captureID; fields["stage"] = "network_" + stage
         MacDiagnostics.shared.record("capture_rotation", fields: fields)
-        DispatchQueue.main.async { self.onNetworkStatus("Reconnecting · microphone stays active. Words at the disconnect may be incomplete; recent audio is kept locally.") }
+        let headline = stopping ? "Finishing buffered audio · reconnecting." : "Reconnecting · microphone stays active."
+        DispatchQueue.main.async { self.onNetworkStatus(headline + " Words at the disconnect may be incomplete; recent audio is kept locally.") }
     }
     private func beginNetworkAttempt() {
         let generation = socketGeneration
