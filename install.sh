@@ -6,7 +6,7 @@ set -euo pipefail
 # Work in a disposable directory and remove it on success or failure.
 # Pin all build inputs to one reviewed client release. The outer installer may
 # be fetched from `main`, but the executable source cannot drift mid-install.
-BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/66c7d25d7d2c568c69b50d76d6e9e963bb20e10b"
+BASE="https://raw.githubusercontent.com/QualityCopperShovel/voice-feed-mac/6854bdeaef520769e2b961ed6fb8bcdbe8f59ad6"
 BUILD_DIR="$(mktemp -d -t voice-feed-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -14,7 +14,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 # connection and overall deadlines.
 mkdir -p "$BUILD_DIR/Sources/VoiceFeedMac" "$BUILD_DIR/Sources/CaptureCore" "$BUILD_DIR/Tests/CaptureCoreTests" "$BUILD_DIR/Sources/AudioSafety/include" "$BUILD_DIR/Sources/CaptureAudio" "$BUILD_DIR/Tests/CaptureAudioTests"
 mkdir -p "$BUILD_DIR/Resources/LaunchDaemons" "$BUILD_DIR/Sources/AudioRecoveryProtocol" "$BUILD_DIR/Sources/VoiceFeedAudioRecovery"
-for FILE in Package.swift Info.plist Resources/AppIcon.icns Resources/LaunchDaemons/com.aisloppy.voice-feed.audio-recovery.plist; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
+for FILE in Package.swift Info.plist Entitlements.plist Resources/AppIcon.icns Resources/LaunchDaemons/com.aisloppy.voice-feed.audio-recovery.plist; do curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/$FILE" -o "$BUILD_DIR/$FILE"; done
 curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 "$BASE/Sources/VoiceFeedMac/main.swift" -o "$BUILD_DIR/Sources/VoiceFeedMac/main.swift"
 
 for FILE in Sources/CaptureCore/AudioServiceRecovery.swift Tests/CaptureCoreTests/AudioServiceRecoveryTests.swift Sources/AudioRecoveryProtocol/AudioRecoveryProtocol.swift Sources/VoiceFeedAudioRecovery/main.swift Sources/VoiceFeedMac/AudioServiceRecoveryClient.swift Sources/CaptureCore/TransportRecovery.swift Tests/CaptureCoreTests/TransportRecoveryTests.swift Sources/CaptureCore/BackendHandoff.swift Tests/CaptureCoreTests/BackendHandoffTests.swift Sources/AudioSafety/AudioSafety.m Sources/AudioSafety/include/AudioSafety.h Sources/CaptureAudio/MicrophoneConverter.swift Sources/CaptureAudio/UpdateLauncher.swift Tests/CaptureAudioTests/UpdateLauncherTests.swift Tests/CaptureAudioTests/AppIconTests.swift Sources/CaptureAudio/SystemMicrophoneDevice.swift Tests/CaptureAudioTests/MicrophoneRecoveryTests.swift Sources/CaptureCore/CaptureRecovery.swift Sources/CaptureCore/MicrophoneReadiness.swift Sources/CaptureCore/RotationBuffer.swift Sources/CaptureCore/RecoveryAudio.swift Tests/CaptureCoreTests/RecoveryAudioTests.swift Tests/CaptureCoreTests/RotationBufferTests.swift Tests/CaptureCoreTests/MicrophoneReadinessTests.swift Tests/CaptureCoreTests/CaptureRecoveryTests.swift Sources/VoiceFeedMac/LiveCapture.swift Sources/VoiceFeedMac/Diagnostics.swift Sources/CaptureCore/DiagnosticJournal.swift Sources/CaptureCore/DiagnosticEvidence.swift Sources/CaptureCore/DiagnosticUploadAttempt.swift Sources/CaptureCore/UpdateAdmission.swift Sources/CaptureCore/UpdateRelaunch.swift Tests/CaptureCoreTests/UpdateRelaunchTests.swift Tests/CaptureCoreTests/UpdateAdmissionTests.swift Tests/CaptureCoreTests/DiagnosticEvidenceTests.swift Sources/CaptureCore/SpeechGate.swift Tests/CaptureCoreTests/SpeechGateTests.swift Tests/CaptureCoreTests/DiagnosticJournalTests.swift; do
@@ -42,7 +42,7 @@ DEVELOPER_IDENTITY="Developer ID Application: jesse Aldridge (7ZPTPEXGRC)"
 if security find-identity -v -p codesigning | grep -Fq "\"$DEVELOPER_IDENTITY\""; then
   echo "Signing Voice Feed with Developer ID."
   codesign --force --options runtime --identifier com.aisloppy.voice-feed.audio-recovery --sign "$DEVELOPER_IDENTITY" "$STAGED_APP/Contents/Library/HelperTools/VoiceFeedAudioRecovery"
-  codesign --force --options runtime --sign "$DEVELOPER_IDENTITY" "$STAGED_APP"
+  codesign --force --options runtime --entitlements "$BUILD_DIR/Entitlements.plist" --sign "$DEVELOPER_IDENTITY" "$STAGED_APP"
 else
   echo "Developer ID unavailable; using an ad-hoc signature for this local build."
   codesign --force --identifier com.aisloppy.voice-feed.audio-recovery --sign - "$STAGED_APP/Contents/Library/HelperTools/VoiceFeedAudioRecovery"

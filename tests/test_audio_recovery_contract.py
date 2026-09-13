@@ -42,3 +42,10 @@ class AudioRecoveryContractTests(unittest.TestCase):
         source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
         start = source[source.index('@objc func startListening()'):source.index('func enableAndLease()')]
         self.assertIn('audioRecoveryPolicy.reset()', start)
+
+    def test_source_install_preserves_hardened_runtime_microphone_entitlement(self):
+        source = (ROOT / 'install.sh').read_text()
+        self.assertIn('Info.plist Entitlements.plist Resources/', source)
+        self.assertIn('--entitlements "$BUILD_DIR/Entitlements.plist"', source)
+        with (ROOT / 'Entitlements.plist').open('rb') as file:
+            self.assertTrue(plistlib.load(file)['com.apple.security.device.audio-input'])

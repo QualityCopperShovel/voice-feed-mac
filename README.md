@@ -278,7 +278,7 @@ helper; install the Developer ID signed release.
 
 With capture enabled, microphone permission granted and the Mac awake, at least
 three missing-callback failures spanning one minute make Voice Feed suspect an
-audio-service stall. Ordinary microphone retries happen first. Silence, mute,
+audio-service stall. Ordinary microphone retries happen first. Silence with continuing callbacks,
 missing input devices, unavailable formats, permission denial and network/provider
 failures do not authorize this recovery. This cannot prove that headphone output
 is broken or diagnose every Core Audio fault.
@@ -298,4 +298,4 @@ are required before reporting listening. Capture history retains the existing
 available after failure. macOS approval and real hardware recovery cannot be
 verified by the server or by CI; an installed-device observation is still needed.
 
-Release validation: source `66c7d25d7d2c568c69b50d76d6e9e963bb20e10b`, CI `34775948693`. Intel and Apple-silicon tests, release builds, app launch and unprivileged-helper refusal checks passed; the universal bundle passed signing, notarization, stapling and Gatekeeper verification. Administrator approval and recovery on a real affected Mac remain unverified.
+Release validation: source `6854bdeaef520769e2b961ed6fb8bcdbe8f59ad6`, CI `34776314615`. Intel and Apple-silicon tests, release builds, app launch and unprivileged-helper refusal checks passed; the universal bundle passed signing, notarization, stapling and Gatekeeper verification. Archive SHA-256: `419d35e3d1de0417feff33d805c53221ebf59363a6199fb208343351027d26f6`. Administrator approval and recovery on a real affected Mac remain unverified.
