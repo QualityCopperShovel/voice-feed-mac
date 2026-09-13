@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.7"
+let clientVersion = "1.5.8"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -162,6 +162,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     private var lastCaptureFailure: String?
     private let captureDetails = NSMenuItem(title: "Show capture details…", action: #selector(showCaptureDetails), keyEquivalent: "")
     var recovery = CaptureRecovery()
+    private var audioRecoveryPolicy = AudioServiceRecovery()
+    private let audioRecoveryClient = AudioServiceRecoveryClient()
+    private var audioRecoveryAwaitingCapture = false
+    private let audioRecoveryMenu = NSMenuItem(title: "Automatic audio recovery: Off…", action: #selector(toggleAudioRecovery), keyEquivalent: "")
+
+    private func refreshAudioRecoveryMenu() {
+        switch audioRecoveryClient.service.status {
+        case .enabled: audioRecoveryMenu.title = "Automatic audio recovery: On"
+        case .requiresApproval: audioRecoveryMenu.title = "Audio recovery: Approve in System Settings…"
+        default: audioRecoveryMenu.title = "Automatic audio recovery: Off…"
+        }
+    }
+    @objc private func toggleAudioRecovery() {
+        let service = audioRecoveryClient.service
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+                audioRecoveryPolicy.reset()
+            } else {
+                guard audioRecoveryClient.signedRelease else {
+                    let alert = NSAlert(); alert.messageText = "Signed Voice Feed required"
+                    alert.informativeText = "Install the signed Voice Feed download to enable administrator-approved audio recovery."
+                    alert.runModal(); return
+                }
+                if service.status != .requiresApproval { try service.register() }
+                if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+            }
+        } catch {
+            let alert = NSAlert(); alert.messageText = "Audio recovery setup failed"
+            alert.informativeText = error.localizedDescription; alert.runModal()
+        }
+        refreshAudioRecoveryMenu()
+    }
+    private func recoverAudioService(after error: NSError) -> Bool {
+        let suspected = audioRecoveryPolicy.failed(error, permissionGranted: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
+        guard suspected, audioRecoveryClient.approved, !relaunch.running else { return false }
+        let defaults = UserDefaults.standard
+        let last = (defaults.object(forKey: "audioServiceRestartAttempt") as? NSNumber)?.doubleValue
+        guard AudioRestartCooldown.allowed(lastAttempt: last, now: Date().timeIntervalSince1970) else { return false }
+        defaults.set(Date().timeIntervalSince1970, forKey: "audioServiceRestartAttempt")
+        stopCapture(); reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+        let ticket = recovery.generation
+        audioRecoveryPolicy.reset()
+        setStatus("Restarting Mac audio…")
+        MacDiagnostics.shared.record("capture_reconnect", fields: ["stage": "audio_service_restart_requested"])
+        audioRecoveryClient.restart { [weak self] ok, message in
+            guard let self else { return }
+            MacDiagnostics.shared.record("capture_reconnect", fields: ["stage": ok ? "audio_service_restart_sent" : "audio_service_restart_failed"])
+            self.lastCaptureFailure = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium) + "\n" + message
+            guard self.recovery.accepts(ticket), self.desiredListening else { return }
+            self.audioRecoveryAwaitingCapture = ok
+            self.setStatus(message)
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.recovery.accepts(ticket), self.desiredListening else { return }
+                self.enableAndLease()
+            }
+            self.reconnectWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+        }
+        return true
+    }
     var liveID = UUID()
     var workspaceObservers: [NSObjectProtocol] = []
     let status = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: ""), connect = NSMenuItem(title: "Connect this Mac…", action: #selector(connectDevice), keyEquivalent: ""), update = NSMenuItem(title: "Check for updates", action: #selector(checkForUpdates), keyEquivalent: ""), version = NSMenuItem(title: "Version \(clientVersion)", action: nil, keyEquivalent: "")
@@ -218,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         diagnosticTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
             MacDiagnostics.shared.sync(api: self.api) { self.diagnosticStatus.title = $0 }
+            self.refreshAudioRecoveryMenu()
             MacDiagnostics.shared.record("main_loop_heartbeat", fields: ["listening": String(self.listening), "desired": String(self.desiredListening)])
         }
         let diagnostics = NSMenuItem(title: "Open diagnostic logs…", action: #selector(openDiagnostics), keyEquivalent: "")
@@ -231,7 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         [status, captureDetails, connect, update, devices, quitItem].forEach { $0.target = self }
         status.action = nil
         loginItem.target = self
-        let menu = NSMenu(); [status, captureDetails, .separator(), connect, .separator(), loginItem, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        audioRecoveryMenu.target = self; refreshAudioRecoveryMenu()
+        let menu = NSMenu(); [status, captureDetails, .separator(), connect, .separator(), loginItem, audioRecoveryMenu, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification, object:nil, queue:.main) { [weak self] _ in self?.willSleep() })
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didWakeNotification, object:nil, queue:.main) { [weak self] _ in self?.didWake() })
         api.token = keychain.load(); refreshMenu()
@@ -349,13 +412,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     func willSleep() {
         MacDiagnostics.shared.record("device_sleep")
+        audioRecoveryPolicy.reset()
         recovery.sleep(); relaunch.cancel("Update restart interrupted by sleep — click to retry")
         reconnectWorkItem?.cancel(); reconnectWorkItem = nil
         stopCapture(); setStatus("Sleeping · capture will resume after wake")
     }
     func didWake() {
         MacDiagnostics.shared.record("device_wake")
-        recovery.wake()
+        recovery.wake(); audioRecoveryPolicy.reset()
         guard desiredListening else { setStatus("Paused"); return }
         setStatus("Waking microphone…")
         let ticket = recovery.generation
@@ -428,6 +492,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         if failure.domain == "VoiceFeed" && [401, 410, 422].contains(failure.code) {
             desiredListening = false; stopCapture(); api.token = nil; refreshMenu(); setStatus(error.localizedDescription); return
         }
+        if recoverAudioService(after: failure) { return }
         stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt = recovery.retryAttempt
         let delay = retry.delay
         if hasEstablishedLease {
@@ -445,7 +510,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         let captureID = UUID(); liveID = captureID
         setStatus("Connecting live transcription…")
         live=LiveCapture(token:token,connectionID:connectionID,
-            onReady: { guard self.liveID == captureID, self.desiredListening else { return }; self.recovery.captureReady(); self.statusItem.button?.image = voiceFeedStatusImage(); self.setStatus("Listening") },
+            onReady: { guard self.liveID == captureID, self.desiredListening else { return }; self.recovery.captureReady(); self.audioRecoveryPolicy.ready()
+                if self.audioRecoveryAwaitingCapture {
+                    self.audioRecoveryAwaitingCapture = false
+                    MacDiagnostics.shared.record("capture_reconnect", fields: ["stage": "audio_service_capture_restored"])
+                }
+                self.statusItem.button?.image = voiceFeedStatusImage(); self.setStatus("Listening") },
             onFailure: { error in
                 guard self.liveID == captureID else { return }
                 if self.desiredListening { self.scheduleReconnect(after:error) }
@@ -468,6 +538,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         live?.start()
     }
     @objc func stopListening() {
+        audioRecoveryPolicy.reset()
         desiredListening=false; reconnectAttempt=0; reconnectWorkItem?.cancel(); reconnectWorkItem=nil; refreshMenu()
         if let live {
             setStatus("Finishing last words…"); live.stop()

@@ -267,3 +267,33 @@ local recovery recording available. Authentication revocation, explicit feed-off
 lease conflicts and hardware failures are not treated as transient transport errors.
 `capture_rotation` diagnostics distinguish `network_receive`, `network_send`,
 `network_ping`, lease/timeout/busy stages, and `completed`, with one capture ID.
+
+## Automatic Mac audio recovery (1.5.8)
+
+The menu’s **Automatic audio recovery: Off…** action registers a single-purpose
+macOS helper. Approve it as an administrator in **System Settings → General →
+Login Items** when requested. It stays off until approved; selecting the menu
+item while enabled unregisters it. Ad-hoc builds cannot use the privileged
+helper; install the Developer ID signed release.
+
+With capture enabled, microphone permission granted and the Mac awake, at least
+three missing-callback failures spanning one minute make Voice Feed suspect an
+audio-service stall. Ordinary microphone retries happen first. Silence, mute,
+missing input devices, unavailable formats, permission denial and network/provider
+failures do not authorize this recovery. This cannot prove that headphone output
+is broken or diagnose every Core Audio fault.
+
+The approved helper runs only `/usr/bin/killall -9 coreaudiod`, without a shell
+or caller-supplied arguments. This interrupts all Mac audio, including other apps.
+Both sides enforce the signed Voice Feed identity. The daemon persists a global
+30-minute attempt cooldown before executing; app relaunches and failed commands
+cannot evade it. Its command has a five-second deadline, and the app gives the
+XPC request ten seconds before continuing normal retries.
+
+A successful command means only “restart requested.” New microphone callbacks
+are required before reporting listening. Capture history retains the existing
+`capture_reconnect` event with `audio_service_restart_requested`,
+`audio_service_restart_sent`, `audio_service_restart_failed` and
+`audio_service_capture_restored` stages. An open capture-details message remains
+available after failure. macOS approval and real hardware recovery cannot be
+verified by the server or by CI; an installed-device observation is still needed.

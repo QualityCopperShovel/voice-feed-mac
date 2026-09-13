@@ -39,12 +39,16 @@ ARTIFACT="$DIST/Voice-Feed-$VERSION.zip"
 
 xcrun swift build -c release --package-path "$ROOT"
 BIN_DIR="$(xcrun swift build -c release --show-bin-path --package-path "$ROOT")"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$DIST"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Library/HelperTools" "$APP/Contents/Library/LaunchDaemons" "$DIST"
 install -m 755 "$BIN_DIR/VoiceFeedMac" "$APP/Contents/MacOS/VoiceFeedMac"
+install -m 755 "$BIN_DIR/VoiceFeedAudioRecovery" "$APP/Contents/Library/HelperTools/VoiceFeedAudioRecovery"
+install -m 644 "$ROOT/Resources/LaunchDaemons/com.aisloppy.voice-feed.audio-recovery.plist" "$APP/Contents/Library/LaunchDaemons/"
 install -m 644 "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 install -m 644 "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-run_with_timeout 180 codesign --force --deep --options runtime --timestamp \
+run_with_timeout 180 codesign --force --options runtime --timestamp \
+  --identifier com.aisloppy.voice-feed.audio-recovery --sign "$IDENTITY" "$APP/Contents/Library/HelperTools/VoiceFeedAudioRecovery"
+run_with_timeout 180 codesign --force --options runtime --timestamp \
   --entitlements "$ROOT/Entitlements.plist" --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 ditto -c -k --keepParent "$APP" "$UPLOAD"

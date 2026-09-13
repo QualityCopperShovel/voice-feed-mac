@@ -8,13 +8,16 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .executable(name: "VoiceFeedMac", targets: ["VoiceFeedMac"]),
+        .executable(name: "VoiceFeedAudioRecovery", targets: ["VoiceFeedAudioRecovery"]),
     ],
     targets: [
         .target(name: "CaptureCore"),
+        .target(name: "AudioRecoveryProtocol"),
+        .executableTarget(name: "VoiceFeedAudioRecovery", dependencies: ["CaptureCore", "AudioRecoveryProtocol"]),
         .target(name: "AudioSafety", publicHeadersPath: "include"),
         .target(name: "CaptureAudio", dependencies: ["AudioSafety"]),
         .testTarget(name: "CaptureAudioTests", dependencies: ["CaptureAudio", "AudioSafety", "CaptureCore"]),
-        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore", "CaptureAudio", "AudioSafety"]),
+        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore", "CaptureAudio", "AudioSafety", "AudioRecoveryProtocol"]),
         .testTarget(name: "CaptureCoreTests", dependencies: ["CaptureCore"]),
     ]
 )
