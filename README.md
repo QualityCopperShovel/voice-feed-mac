@@ -299,3 +299,7 @@ available after failure. macOS approval and real hardware recovery cannot be
 verified by the server or by CI; an installed-device observation is still needed.
 
 Release validation: source `6854bdeaef520769e2b961ed6fb8bcdbe8f59ad6`, CI `34776314615`. Intel and Apple-silicon tests, release builds, app launch and unprivileged-helper refusal checks passed; the universal bundle passed signing, notarization, stapling and Gatekeeper verification. Archive SHA-256: `419d35e3d1de0417feff33d805c53221ebf59363a6199fb208343351027d26f6`. Administrator approval and recovery on a real affected Mac remain unverified.
+
+### 1.5.9 audio error details
+
+Capture details retain the failed audio operation, observed device/format, original NSError domain/code and bounded underlying reasons. `-10868` is displayed as audio-format rejection, without treating it as proof of a stalled audio service. Retry status stays concise. Structured capture diagnostics retain the same sanitized evidence through the existing diagnostic fields. Source installer pins `dec7d2a74a4d35d3f7e24e609bc202ae204d4abd`; macOS validation run: https://github.com/QualityCopperShovel/voice-feed-mac/actions/runs/34778542343.
