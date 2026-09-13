@@ -297,3 +297,5 @@ are required before reporting listening. Capture history retains the existing
 `audio_service_capture_restored` stages. An open capture-details message remains
 available after failure. macOS approval and real hardware recovery cannot be
 verified by the server or by CI; an installed-device observation is still needed.
+
+Release validation: source `66c7d25d7d2c568c69b50d76d6e9e963bb20e10b`, CI `34775948693`. Intel and Apple-silicon tests, release builds, app launch and unprivileged-helper refusal checks passed; the universal bundle passed signing, notarization, stapling and Gatekeeper verification. Administrator approval and recovery on a real affected Mac remain unverified.
