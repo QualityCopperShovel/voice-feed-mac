@@ -101,16 +101,24 @@ final class LiveCapture: @unchecked Sendable {
     private func capture() throws {
         var input: AVAudioInputNode?
         var startError: Error?
+        var audioStage = "Create audio input node"
+        var audioContext: [String: String] = [:]
         let converter = MicrophoneConverter()
         if recoveryAudio == nil { recoveryAudio = try RecoveryAudio(directory: Self.recoveryDirectory) }
         let generation = hardwareGeneration
         let nativeError = VFAudioPerform {
             let node = self.engine.inputNode; input = node
+            audioStage = "Select and inspect macOS default input"
             do {
                 _ = try MicrophoneInput.prepare(SystemMicrophoneDevice(node: node)) { fields in
+                    audioContext.merge(fields) { _, new in new }
                     MacDiagnostics.shared.record("audio_format", fields: fields.merging(["capture_id": self.captureID]) { _, new in new })
                 }
             } catch { startError = error; return }
+            audioStage = "Inspect audio node formats"
+            audioContext["audio_input_format"] = node.inputFormat(forBus: 0).description
+            audioContext["audio_output_format"] = node.outputFormat(forBus: 0).description
+            audioStage = "Install microphone tap"
             // Do not force a cached output format back onto changing hardware.
             node.installTap(onBus:0, bufferSize:4096, format:nil) { buffer, _ in
                 do {
@@ -143,10 +151,12 @@ final class LiveCapture: @unchecked Sendable {
                 } catch { self.queue.async { if generation == self.hardwareGeneration { self.fail(error) } } }
             }
             self.tapped = true
+            audioStage = "Prepare audio engine"
             self.engine.prepare()
+            audioStage = "Start audio engine"
             do { try self.engine.start() } catch { startError = error }
         }
-        if let error = (nativeError as Error?) ?? startError { throw error }
+        if let error = (nativeError as Error?) ?? startError { throw DiagnosticEvidence.audioError(error, stage: audioStage, fields: audioContext) }
         guard input != nil else { throw NSError(domain:"VoiceFeedAudio", code:2) }
         lastBuffer = Date()
         microphoneHealth = MicrophoneReadiness(); inputSilent = false

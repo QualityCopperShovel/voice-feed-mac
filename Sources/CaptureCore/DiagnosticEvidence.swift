@@ -25,9 +25,50 @@ public enum DiagnosticEvidence {
         }
         return result
     }
+    /// Preserve error identity for retry policy; attach only observed audio context.
+    public static func audioError(_ error: Error, stage: String, fields: [String: String] = [:]) -> NSError {
+        let original = error as NSError
+        var info = original.userInfo
+        if info["stage"] == nil { info["stage"] = stage }
+        for (key, value) in fields where info[key] == nil { info[key] = value }
+        return NSError(domain: original.domain, code: original.code, userInfo: info)
+    }
+    public static func summary(_ error: Error) -> String {
+        let value = error as NSError
+        if ["com.apple.coreaudio.avfaudio", NSOSStatusErrorDomain].contains(value.domain), value.code == -10868 {
+            return "Microphone audio format rejected (−10868)"
+        }
+        return value.localizedDescription
+    }
+    public static func details(_ error: Error) -> String {
+        let value = error as NSError
+        var lines = [summary(value), "Error: \(value.domain) (\(value.code))"]
+        for (key, label) in [("stage", "Operation"), ("input_device", "Input device ID"),
+                             ("sample_rate", "Sample rate (Hz)"), ("channels", "Channels"),
+                             ("audio_input_format", "Hardware input format"), ("audio_output_format", "Tap output format")] {
+            if let text = value.userInfo[key] as? String { lines.append("\(label): \(text)") }
+        }
+        if value.code == -10868 && ["com.apple.coreaudio.avfaudio", NSOSStatusErrorDomain].contains(value.domain) {
+            lines.append("macOS rejected an audio format. This alone does not establish an audio-service stall; automatic system-audio restart is not triggered by this error.")
+        }
+        var current: NSError? = value
+        for _ in 0..<4 {
+            guard let item = current else { break }
+            for key in [NSLocalizedFailureReasonErrorKey, NSLocalizedRecoverySuggestionErrorKey, "exception_reason"] {
+                if let text = item.userInfo[key] as? String { lines.append(String(text.prefix(2048))) }
+            }
+            current = item.userInfo[NSUnderlyingErrorKey] as? NSError
+            if let next = current { lines.append("Underlying: \(next.domain) (\(next.code)): \(next.localizedDescription)") }
+        }
+        return lines.joined(separator: "\n")
+    }
     public static func failure(_ error: Error) -> [String: String] {
         let error = error as NSError
         var row = ["domain":error.domain, "code":String(error.code)]
+        for key in ["stage", "input_device", "sample_rate", "channels"] {
+            if let value = error.userInfo[key] as? String { row[key] = value }
+        }
+        if error.userInfo["stage"] != nil { row["exception_message"] = details(error) }
         // Only the native audio boundary supplies these structured fields.
         if error.domain == "VoiceFeedAudio" {
             for key in ["exception_name", "exception_reason", "exception_frames"] {

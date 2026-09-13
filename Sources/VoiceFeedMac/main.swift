@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.8"
+let clientVersion = "1.5.9"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -483,7 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
     }
     func scheduleReconnect(after error: Error) {
-        lastCaptureFailure = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium) + "\n" + error.localizedDescription
+        lastCaptureFailure = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium) + "\n" + DiagnosticEvidence.details(error)
         MacDiagnostics.shared.failure("capture_reconnect", error)
         statusItem.button?.image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone capture failed")
         guard desiredListening, !recovery.sleeping else { return }
@@ -497,7 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt = recovery.retryAttempt
         let delay = retry.delay
         if hasEstablishedLease {
-            setStatus("\(error.localizedDescription). Retrying in \(Int(delay))s…")
+            setStatus("\(DiagnosticEvidence.summary(error)). Retrying in \(Int(delay))s…")
         } else if reconnectAttempt <= 2 {
             setStatus("Connecting… retrying in \(Int(delay))s")
         } else {

@@ -1,5 +1,6 @@
 import AVFoundation
 import AudioSafety
+import CaptureCore
 
 /// Owned by the serial audio tap. Format comes from each actual hardware buffer.
 public final class MicrophoneConverter {
@@ -31,7 +32,11 @@ public final class MicrophoneConverter {
                 result = Data(bytes: samples, count: Int(pcm.frameLength) * 2)
             }
         }
-        if let error = nativeError ?? conversionError { throw error }
+        if let error = nativeError ?? conversionError {
+            throw DiagnosticEvidence.audioError(error, stage: "Convert microphone buffer to 24 kHz mono PCM16",
+                fields: ["sample_rate": String(format.sampleRate), "channels": String(format.channelCount),
+                         "audio_input_format": format.description, "audio_output_format": output.description])
+        }
         return result
     }
 }
@@ -58,7 +63,8 @@ public enum MicrophoneInput {
         guard device != 0 else {
             throw NSError(domain: "VoiceFeedAudio", code: 4, userInfo: [NSLocalizedDescriptionKey: "macOS has no default microphone. Connect a microphone or select an available input."])
         }
-        try access.bindInputDevice(device)
+        do { try access.bindInputDevice(device) }
+        catch { throw DiagnosticEvidence.audioError(error, stage: "Select macOS default input device", fields: ["input_device": String(device)]) }
         let format = access.inputFormat()
         evidence(["input_device": String(device), "sample_rate": String(format.sampleRate), "channels": String(format.channelCount)])
         guard format.sampleRate > 0, format.channelCount > 0 else {

@@ -2,6 +2,28 @@ import XCTest
 @testable import CaptureCore
 
 final class DiagnosticEvidenceTests: XCTestCase {
+    func testAudioFailurePreservesIdentityContextAndUnderlyingReason() {
+        let underlying = NSError(domain: NSOSStatusErrorDomain, code: -10868,
+            userInfo: [NSLocalizedFailureReasonErrorKey: "Unsupported channel layout"])
+        let original = NSError(domain: "com.apple.coreaudio.avfaudio", code: -10868,
+            userInfo: [NSUnderlyingErrorKey: underlying])
+        let error = DiagnosticEvidence.audioError(original, stage: "Start audio engine",
+            fields: ["sample_rate": "48000", "channels": "2"])
+        XCTAssertEqual(error.domain, original.domain)
+        XCTAssertEqual(error.code, -10868)
+        XCTAssertEqual(DiagnosticEvidence.summary(error), "Microphone audio format rejected (−10868)")
+        let details = DiagnosticEvidence.details(error)
+        XCTAssertTrue(details.contains("Start audio engine"))
+        XCTAssertTrue(details.contains("48000"))
+        XCTAssertTrue(details.contains("Unsupported channel layout"))
+        XCTAssertEqual(DiagnosticEvidence.failure(error)["stage"], "Start audio engine")
+        XCTAssertNotNil(DiagnosticEvidence.failure(error)["exception_message"])
+        let outer = DiagnosticEvidence.audioError(error, stage: "Generic start")
+        XCTAssertEqual(outer.userInfo["stage"] as? String, "Start audio engine")
+        XCTAssertEqual(DiagnosticEvidence.summary(NSError(domain: "Network", code: -10868)),
+                       NSError(domain: "Network", code: -10868).localizedDescription)
+    }
+
     func testAllowlistRemovesPayloadAndCredentials() {
         let row = DiagnosticEvidence.sanitized(["event":"capture_failed", "audio":"secret", "token":"secret", "domain":"vf_capture_secret"])
         XCTAssertNil(row["audio"]); XCTAssertNil(row["token"])

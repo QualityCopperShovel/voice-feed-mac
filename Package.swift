@@ -15,7 +15,7 @@ let package = Package(
         .target(name: "AudioRecoveryProtocol"),
         .executableTarget(name: "VoiceFeedAudioRecovery", dependencies: ["CaptureCore", "AudioRecoveryProtocol"]),
         .target(name: "AudioSafety", publicHeadersPath: "include"),
-        .target(name: "CaptureAudio", dependencies: ["AudioSafety"]),
+        .target(name: "CaptureAudio", dependencies: ["AudioSafety", "CaptureCore"]),
         .testTarget(name: "CaptureAudioTests", dependencies: ["CaptureAudio", "AudioSafety", "CaptureCore"]),
         .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore", "CaptureAudio", "AudioSafety", "AudioRecoveryProtocol"]),
         .testTarget(name: "CaptureCoreTests", dependencies: ["CaptureCore"]),
