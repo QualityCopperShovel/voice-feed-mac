@@ -64,6 +64,18 @@ final class InputBindingTests: XCTestCase {
         _ = try MicrophoneInput.prepare(device) { _ in }
         XCTAssertEqual(device.bound, 15)
     }
+    func testUSBUnplugAndReplugReresolvesNewDeviceIdentity() throws {
+        let device = Device()
+        _ = try MicrophoneInput.prepare(device) { _ in }
+        device.selected = 0
+        XCTAssertThrowsError(try MicrophoneInput.prepare(device) { _ in })
+        device.selected = 37 // Reconnected USB devices need not keep their ID.
+        var evidence: [String: String] = [:]
+        let format = try MicrophoneInput.prepare(device) { evidence = $0 }
+        XCTAssertEqual(device.bound, 37)
+        XCTAssertEqual(evidence["input_device"], "37")
+        XCTAssertGreaterThan(format.sampleRate, 0)
+    }
     func testAbsentInputFailsWithoutBindingAnArbitraryDevice() {
         let device = Device(); device.selected = 0
         XCTAssertThrowsError(try MicrophoneInput.prepare(device) { _ in }) {

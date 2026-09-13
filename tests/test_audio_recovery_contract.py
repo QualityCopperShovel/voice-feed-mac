@@ -5,6 +5,18 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class AudioRecoveryContractTests(unittest.TestCase):
+    def test_route_rebuild_retires_old_graph_without_replacing_network(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
+        rebuild = source.split('case .rebuild:', 1)[1].split('private func enqueue', 1)[0]
+        self.assertLess(rebuild.index('stopEngine(invalidateCallbacks: true)'), rebuild.index('engine = AVAudioEngine()'))
+        self.assertLess(rebuild.index('engine = AVAudioEngine()'), rebuild.index('try capture()'))
+        self.assertNotIn('socket', rebuild)
+        self.assertNotIn('session', rebuild)
+        handler = source.split('forName: .AVAudioEngineConfigurationChange', 1)[1].split('defaultMicrophoneObserver =', 1)[0]
+        self.assertIn('self.queue.async', handler)
+        self.assertIn('generation == self.hardwareGeneration', handler)
+        self.assertNotIn('engine = AVAudioEngine()', handler)
+
     def test_daemon_is_on_demand_and_embedded(self):
         with (ROOT / 'Resources/LaunchDaemons/com.aisloppy.voice-feed.audio-recovery.plist').open('rb') as source:
             config = plistlib.load(source)

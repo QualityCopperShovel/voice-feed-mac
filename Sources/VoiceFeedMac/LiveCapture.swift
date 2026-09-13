@@ -7,7 +7,7 @@ import AudioSafety
 /// Continuous audio packets share one provider transcription context.
 final class LiveCapture: @unchecked Sendable {
     private let queue = DispatchQueue(label: "voice-feed.audio")
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 15
@@ -184,6 +184,10 @@ final class LiveCapture: @unchecked Sendable {
             // This runs on our queue, never Apple's notification callback queue.
             // Keep the socket, queued packets, gate and recovery recording intact.
             stopEngine(invalidateCallbacks: true)
+            // Configuration changes leave nodes carrying the previous formats.
+            // Replace the graph on our serial queue after retiring its callbacks;
+            // never tear it down inside Apple's notification handler.
+            engine = AVAudioEngine()
             do { try capture() } catch { fail(error) }
         }
     }
