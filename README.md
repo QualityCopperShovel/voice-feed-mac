@@ -303,3 +303,9 @@ Release validation: source `6854bdeaef520769e2b961ed6fb8bcdbe8f59ad6`, CI `34776
 ### 1.5.9 audio error details
 
 Capture details retain the failed audio operation, observed device/format, original NSError domain/code and bounded underlying reasons. `-10868` is displayed as audio-format rejection, without treating it as proof of a stalled audio service. Retry status stays concise. Structured capture diagnostics retain the same sanitized evidence through the existing diagnostic fields. Source installer pins `dec7d2a74a4d35d3f7e24e609bc202ae204d4abd`; macOS validation run: https://github.com/QualityCopperShovel/voice-feed-mac/actions/runs/34778542343.
+
+### 1.5.10 device-transition recovery and evidence
+
+Hardware reconfiguration retires the old graph and its callbacks on the audio queue, then creates a fresh AVAudioEngine, while preserving the transcription connection and queued recording. macOS configuration notifications can leave old node formats attached: https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/avaudioengineconfigurationchange. This removes one plausible stale-format path; physical USB unplug/replug and sleep/wake on the affected headset remain unverified.
+
+The journal retains fractional timestamps and per-run sequence numbers, plus explicit route-change and first-callback events. Capture IDs link engine start/stop and failures. Existing sleep/wake records provide context. The source installer pins `6875b16524ddc6606d453048a92321c935b039f0`; CI: https://github.com/QualityCopperShovel/voice-feed-mac/actions/runs/34779093934.
