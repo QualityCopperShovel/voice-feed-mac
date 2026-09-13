@@ -88,7 +88,7 @@ final class LiveCapture: @unchecked Sendable {
         socket=session.webSocketTask(with: request)
     }
     func start() {
-        MacDiagnostics.shared.record("capture_start")
+        MacDiagnostics.shared.record("capture_start", fields: ["capture_id": captureID])
         queue.async {
             self.started=Date(); self.socket?.resume(); self.receive()
             let timer=DispatchSource.makeTimerSource(queue:self.queue)
@@ -142,6 +142,7 @@ final class LiveCapture: @unchecked Sendable {
                         }
                         guard self.drainStarted == nil else { return }
                         if first {
+                            MacDiagnostics.shared.record("audio_callbacks_started", fields: ["capture_id": self.captureID, "sample_rate": "24000", "channels": "1"])
                             self.packets.append(["type": "capture.heartbeat"])
                             DispatchQueue.main.async(execute: self.onReady)
                         }
@@ -164,14 +165,16 @@ final class LiveCapture: @unchecked Sendable {
             guard let self else { return }
             self.queue.async {
                 guard generation == self.hardwareGeneration else { return }
+                MacDiagnostics.shared.record("audio_route_changed", fields: ["capture_id": self.captureID, "stage": "engine_configuration_changed"])
                 self.reconfigureMicrophone()
             }
         }
         defaultMicrophoneObserver = try DefaultMicrophoneObserver(queue: queue) { [weak self] in
             guard let self, generation == self.hardwareGeneration else { return }
+            MacDiagnostics.shared.record("audio_route_changed", fields: ["capture_id": self.captureID, "stage": "default_input_changed"])
             self.reconfigureMicrophone()
         }
-        MacDiagnostics.shared.record("audio_engine_started")
+        MacDiagnostics.shared.record("audio_engine_started", fields: ["capture_id": captureID])
     }
     private func reconfigureMicrophone() {
         guard !terminal, !failureReporting, !stopping, drainStarted == nil else { return }
@@ -367,7 +370,7 @@ final class LiveCapture: @unchecked Sendable {
     private func stopEngine(invalidateCallbacks: Bool = false) {
         if invalidateCallbacks { hardwareGeneration = UUID() }
         defaultMicrophoneObserver?.stop(); defaultMicrophoneObserver = nil
-        MacDiagnostics.shared.record("audio_engine_stopping")
+        MacDiagnostics.shared.record("audio_engine_stopping", fields: ["capture_id": captureID])
         if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer); configurationObserver = nil }
         if let error = VFAudioPerform({ self.engine.stop() }) { MacDiagnostics.shared.failure("capture_failed", error) }
         if tapped {

@@ -9,6 +9,7 @@ public final class DiagnosticJournal: @unchecked Sendable {
     private let copies: Int
     private let sessionID = UUID().uuidString
     private let version: String
+    private var sequence: UInt64 = 0
     private var marker: URL { directory.appendingPathComponent("active-session.json") }
     private var log: URL { directory.appendingPathComponent("events.jsonl") }
 
@@ -56,7 +57,10 @@ public final class DiagnosticJournal: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         var row = DiagnosticEvidence.sanitized(fields)
         row["event"] = String(event.prefix(80)); row["session"] = sessionID
-        row["version"] = version; row["timestamp"] = ISO8601DateFormatter().string(from: Date())
+        sequence += 1; row["sequence"] = String(sequence)
+        let timestamp = ISO8601DateFormatter()
+        timestamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        row["version"] = version; row["timestamp"] = timestamp.string(from: Date())
         var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
         data.append(10)
         let manager = FileManager.default

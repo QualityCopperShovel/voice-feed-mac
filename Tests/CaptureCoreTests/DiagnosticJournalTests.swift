@@ -16,6 +16,17 @@ final class DiagnosticJournalTests: XCTestCase {
         XCTAssertTrue(text.contains("capture_start"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("active-session.json").path))
     }
+    func testTransitionSequenceSurvivesSnapshotWithoutGuessingCausality() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let journal = try DiagnosticJournal(directory: dir, version: "test")
+        let events = ["device_sleep", "device_wake", "audio_route_changed", "audio_format", "capture_failed"]
+        for event in events { try journal.record(event) }
+        let rows = try journal.snapshot()
+        XCTAssertEqual(rows.compactMap { $0["event"] }, events)
+        XCTAssertEqual(rows.compactMap { $0["sequence"] }, ["1", "2", "3", "4", "5"])
+        XCTAssertTrue(rows.allSatisfy { $0["timestamp"]?.contains(".") == true })
+    }
     func testRotationIsBoundedAndKeepsValidJSON() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

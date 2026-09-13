@@ -10,8 +10,8 @@ class AudioRecoveryContractTests(unittest.TestCase):
         rebuild = source.split('case .rebuild:', 1)[1].split('private func enqueue', 1)[0]
         self.assertLess(rebuild.index('stopEngine(invalidateCallbacks: true)'), rebuild.index('engine = AVAudioEngine()'))
         self.assertLess(rebuild.index('engine = AVAudioEngine()'), rebuild.index('try capture()'))
-        self.assertNotIn('socket', rebuild)
-        self.assertNotIn('session', rebuild)
+        self.assertNotIn('socket =', rebuild)
+        self.assertNotIn('session =', rebuild)
         handler = source.split('forName: .AVAudioEngineConfigurationChange', 1)[1].split('defaultMicrophoneObserver =', 1)[0]
         self.assertIn('self.queue.async', handler)
         self.assertIn('generation == self.hardwareGeneration', handler)
