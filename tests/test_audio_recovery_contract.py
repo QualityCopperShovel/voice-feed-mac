@@ -37,3 +37,8 @@ class AudioRecoveryContractTests(unittest.TestCase):
             self.assertIn('Contents/Library/HelperTools/VoiceFeedAudioRecovery', source)
             self.assertIn('Resources/LaunchDaemons/com.aisloppy.voice-feed.audio-recovery.plist', source)
             self.assertIn('--identifier com.aisloppy.voice-feed.audio-recovery', source)
+
+    def test_explicit_capture_start_resets_old_failure_evidence(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/main.swift').read_text()
+        start = source[source.index('@objc func startListening()'):source.index('func enableAndLease()')]
+        self.assertIn('audioRecoveryPolicy.reset()', start)

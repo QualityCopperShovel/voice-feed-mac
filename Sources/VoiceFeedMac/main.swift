@@ -430,6 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     }
     // macOS presents its standard microphone consent dialog before capture.
     @objc func startListening() {
+        audioRecoveryPolicy.reset()
         guard api.token != nil, !desiredListening, !relaunch.running, !quitting else { return }
         desiredListening = true; reconnectAttempt = 0; reconnectWorkItem?.cancel(); refreshMenu(); setStatus("Requesting microphone…")
         AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async { self.enableAndLease() } }
