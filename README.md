@@ -195,7 +195,7 @@ the committed PNG and ICNS with `python3 scripts/build_icon.py` (CairoSVG requir
 only for artwork development). All installation and signing paths package the
 same icon before signing.
 
-### Silent recovery (1.5.11)
+### Silent recovery (1.5.12)
 
 Capture failures update the menu-bar icon, status, and diagnostics without an
 audible alert. Automatic reconnection retains its bounded backoff; only a full
