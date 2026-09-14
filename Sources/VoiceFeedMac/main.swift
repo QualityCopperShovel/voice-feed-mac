@@ -487,15 +487,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         MacDiagnostics.shared.failure("capture_reconnect", error)
         statusItem.button?.image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone capture failed")
         guard desiredListening, !recovery.sleeping else { return }
-        let retry = recovery.captureFailed()
-        if retry.alarm { NSSound.beep() }
+        let delay = recovery.captureFailed()
         let failure = error as NSError
         if failure.domain == "VoiceFeed" && [401, 410, 422].contains(failure.code) {
             desiredListening = false; stopCapture(); api.token = nil; refreshMenu(); setStatus(error.localizedDescription); return
         }
         if recoverAudioService(after: failure) { return }
         stopCapture(); reconnectWorkItem?.cancel(); reconnectAttempt = recovery.retryAttempt
-        let delay = retry.delay
         if hasEstablishedLease {
             setStatus("\(DiagnosticEvidence.summary(error)). Retrying in \(Int(delay))s…")
         } else if reconnectAttempt <= 2 {

@@ -195,17 +195,11 @@ the committed PNG and ICNS with `python3 scripts/build_icon.py` (CairoSVG requir
 only for artwork development). All installation and signing paths package the
 same icon before signing.
 
-### Recovery alarms (1.5.3)
+### Silent recovery (1.5.11)
 
-Repeated microphone failures retain exponential backoff (up to 30 seconds)
-through brief successful buffers. One alarm marks a capture interruption; another
-is armed only after at least 60 seconds of uninterrupted confirmed capture. Sleep
-and stopped capture do not sound an alarm. Recovery stays automatic.
-
-A closed lid disconnects built-in microphones on Apple silicon and T2 MacBooks
-in hardware: https://support.apple.com/en-euro/guide/security/secbbd20b00b/web .
-The helper cannot recover audio the microphone never supplied. Opening the lid
-or selecting an available external microphone lets subsequent attempts recover.
+Capture failures update the menu-bar icon, status, and diagnostics without an
+audible alert. Automatic reconnection retains its bounded backoff; only a full
+minute of confirmed capture resets that backoff.
 
 ### Audio configuration changes (1.5.4)
 

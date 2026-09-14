@@ -6,23 +6,18 @@ public struct CaptureRecovery {
     public private(set) var sleeping = false
     public private(set) var retryAttempt = 0
     private var readySince: TimeInterval?
-    private var hasCaptured = false
-    private var alarmSent = false
     public init() {}
     public mutating func captureReady(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         if readySince == nil { readySince = now }
-        hasCaptured = true
     }
     /// A brief nonzero buffer does not end a microphone failure episode.
-    public mutating func captureFailed(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> (delay: TimeInterval, alarm: Bool) {
+    public mutating func captureFailed(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval {
         if let start = readySince, now - start >= 60 {
-            retryAttempt = 0; alarmSent = false
+            retryAttempt = 0
         }
         readySince = nil
         retryAttempt = min(retryAttempt + 1, 7)
-        let alarm = hasCaptured && !alarmSent && !sleeping
-        if alarm { alarmSent = true }
-        return (Self.retryDelay(attempt: retryAttempt), alarm)
+        return Self.retryDelay(attempt: retryAttempt)
     }
     public static func retryDelay(attempt: Int) -> TimeInterval {
         // A failed attempt terminates; the continuous listener schedules another.
