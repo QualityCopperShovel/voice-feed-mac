@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.5.12"
+let clientVersion = "1.5.13"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -132,8 +132,8 @@ final class API {
     private let session: URLSession = { let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 40; return URLSession(configuration: config) }()
     var token: String?
     @discardableResult
-    func request(_ path: String, method: String = "GET", json: [String: Any]? = nil, completion: @escaping (Result<[String: Any], Error>) -> Void) -> URLSessionDataTask {
-        var request = URLRequest(url: URL(string: path, relativeTo: baseURL)!); request.httpMethod = method; request.timeoutInterval = 15
+    func request(_ path: String, method: String = "GET", json: [String: Any]? = nil, timeout: TimeInterval = 15, completion: @escaping (Result<[String: Any], Error>) -> Void) -> URLSessionDataTask {
+        var request = URLRequest(url: URL(string: path, relativeTo: baseURL)!); request.httpMethod = method; request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type"); if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let json { request.httpBody = try? JSONSerialization.data(withJSONObject: json) }
         let task = session.dataTask(with: request) { data, response, error in
@@ -482,7 +482,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
             }
         }
     }
+    // While Voice Feed is off, hold one long poll open so turning it on in a
+    // connected app starts capture within a second rather than a backoff step.
+    func waitForEnable() {
+        guard desiredListening, !listening, !recovery.sleeping else { return }
+        let ticket = recovery.generation, started = ProcessInfo.processInfo.systemUptime
+        api.request("/api/device/preference?wait_enabled_ms=25000", timeout: 35) { result in
+            DispatchQueue.main.async {
+                guard self.desiredListening, !self.listening, self.recovery.accepts(ticket) else { return }
+                switch result {
+                case .failure(let error): self.scheduleReconnect(after: error)
+                case .success(let data) where data["enabled"] as? Bool == true: self.enableAndLease()
+                case .success:
+                    // Never spin if a server answers the wait immediately.
+                    let work = DispatchWorkItem { [weak self] in self?.waitForEnable() }
+                    self.reconnectWorkItem = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + max(0, 1 - (ProcessInfo.processInfo.systemUptime - started)), execute: work)
+                }
+            }
+        }
+    }
     func scheduleReconnect(after error: Error) {
+        if CaptureRecovery.feedDisabled(error), desiredListening, !recovery.sleeping {
+            MacDiagnostics.shared.record("capture_paused", fields: ["stage": "feed_disabled"])
+            stopCapture(); reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+            statusItem.button?.image = voiceFeedStatusImage()
+            setStatus("Paused · turn Voice Feed on in a connected app")
+            waitForEnable(); return
+        }
         lastCaptureFailure = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium) + "\n" + DiagnosticEvidence.details(error)
         MacDiagnostics.shared.failure("capture_reconnect", error)
         statusItem.button?.image = NSImage(systemSymbolName: "mic.slash.fill", accessibilityDescription: "Microphone capture failed")

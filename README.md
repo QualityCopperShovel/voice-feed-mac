@@ -195,6 +195,14 @@ the committed PNG and ICNS with `python3 scripts/build_icon.py` (CairoSVG requir
 only for artwork development). All installation and signing paths package the
 same icon before signing.
 
+### Immediate start after Voice Feed turns on (1.5.13)
+
+When the server reports `feed_disabled`, the helper pauses instead of treating
+it as a capture failure. It holds a bounded long poll on
+`GET /api/device/preference?wait_enabled_ms=25000` and acquires the lease as
+soon as a connected app turns Voice Feed on, rather than after a backoff step of
+up to 30 seconds.
+
 ### Silent recovery (1.5.12)
 
 Capture failures update the menu-bar icon, status, and diagnostics without an

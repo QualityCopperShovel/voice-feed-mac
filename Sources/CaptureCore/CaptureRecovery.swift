@@ -24,6 +24,13 @@ public struct CaptureRecovery {
         // Cap the exponent as well as the delay during prolonged hardware loss.
         min(pow(2, Double(min(max(attempt - 1, 0), 5))), 30)
     }
+    /// Voice Feed being turned off is a pause, not a capture failure: the helper
+    /// waits for the account to turn back on instead of backing off.
+    public static func feedDisabled(_ error: Error) -> Bool {
+        let failure = error as NSError
+        return failure.domain == "VoiceFeed" && [403, 409].contains(failure.code)
+            && failure.userInfo["voiceFeedCode"] as? String == "feed_disabled"
+    }
     public mutating func invalidate() { generation = UUID(); readySince = nil }
     public mutating func sleep() { sleeping = true; invalidate() }
     public mutating func wake() { sleeping = false; invalidate() }

@@ -5,6 +5,16 @@ final class CaptureRecoveryTests: XCTestCase {
         XCTAssertEqual((1...7).map { CaptureRecovery.retryDelay(attempt: $0) }, [1, 2, 4, 8, 16, 30, 30])
         XCTAssertEqual(CaptureRecovery.retryDelay(attempt: 100000), 30)
     }
+    func testFeedOffIsDistinguishedFromCaptureFailures() {
+        func error(_ code: Int, _ voiceFeedCode: String) -> NSError {
+            NSError(domain: "VoiceFeed", code: code, userInfo: ["voiceFeedCode": voiceFeedCode])
+        }
+        XCTAssertTrue(CaptureRecovery.feedDisabled(error(403, "feed_disabled")))
+        XCTAssertTrue(CaptureRecovery.feedDisabled(error(409, "feed_disabled")))
+        XCTAssertFalse(CaptureRecovery.feedDisabled(error(409, "lease_held")))
+        XCTAssertFalse(CaptureRecovery.feedDisabled(error(500, "feed_disabled")))
+        XCTAssertFalse(CaptureRecovery.feedDisabled(NSError(domain: NSURLErrorDomain, code: -1001)))
+    }
     func testSleepAndStopInvalidateEveryPriorCallback() {
         var recovery = CaptureRecovery(); let before = recovery.generation
         XCTAssertTrue(recovery.accepts(before))
