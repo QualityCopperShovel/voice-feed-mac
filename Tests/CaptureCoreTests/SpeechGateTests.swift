@@ -13,6 +13,18 @@ final class SpeechGateTests: XCTestCase {
     func audio(_ events: [GateEvent]) -> Data {
         events.reduce(into: Data()) { data, event in if case .audio(let bytes) = event { data.append(bytes) } }
     }
+    func testDeviceDetectionSurvivesQueueDelayAndResetsAfterPause() {
+        var gate = SpeechGate()
+        _ = gate.consume(pcm(300), capturedAt: 100)
+        XCTAssertEqual(gate.speechStartedAt, 100)
+        _ = gate.consume(pcm(300), capturedAt: 100.1)
+        XCTAssertEqual(gate.speechStartedAt, 100)
+        _ = gate.consume(pcm(0), capturedAt: 102)
+        _ = gate.consume(pcm(300), capturedAt: 102.1)
+        XCTAssertEqual(gate.speechStartedAt, 102.1)
+        _ = gate.consume(pcm(300))
+        XCTAssertNil(gate.speechStartedAt, "Untimestamped rotation audio cannot fabricate detection time")
+    }
     func testMinutesOfSilenceNeverUploadAudio() {
         var gate = SpeechGate()
         for _ in 0..<1800 { XCTAssertTrue(gate.consume(pcm(0)).isEmpty) }

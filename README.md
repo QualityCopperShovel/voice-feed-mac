@@ -311,3 +311,12 @@ Capture details retain the failed audio operation, observed device/format, origi
 Hardware reconfiguration retires the old graph and its callbacks on the audio queue, then creates a fresh AVAudioEngine, while preserving the transcription connection and queued recording. macOS configuration notifications can leave old node formats attached: https://developer.apple.com/documentation/foundation/nsnotification/name-swift.struct/avaudioengineconfigurationchange. This removes one plausible stale-format path; physical USB unplug/replug and sleep/wake on the affected headset remain unverified.
 
 The journal retains fractional timestamps and per-run sequence numbers, plus explicit route-change and first-callback events. Capture IDs link engine start/stop and failures. Existing sleep/wake records provide context. The source installer pins `6875b16524ddc6606d453048a92321c935b039f0`; CI: https://github.com/QualityCopperShovel/voice-feed-mac/actions/runs/34779093934.
+
+### 1.5.14 microphone timing
+
+PCM upload events carry the local speech-detection timestamp before the network
+queue. Continuations preserve their detected start; a new onset after 1.25 seconds
+of quiet starts a new observation. Untimestamped rotation buffers omit timing
+instead of inventing a new capture time. Voice Feed strips this metadata before
+provider forwarding. Consumers can measure device-to-display speech-start bounds;
+this is not individual-word audio alignment.

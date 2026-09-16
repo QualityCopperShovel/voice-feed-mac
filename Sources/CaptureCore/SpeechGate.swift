@@ -9,6 +9,8 @@ public enum GateEvent {
 /// speech is active; only sustained idle audio is kept off the provider stream.
 public struct SpeechGate {
     public private(set) var active = false
+    public private(set) var speechStartedAt: Double?
+    private var lastSpeechAt: Double?
     private var preRoll = Data()
     private var onsetSeconds = 0.0
     private var quietSeconds = 0.0
@@ -38,7 +40,7 @@ public struct SpeechGate {
         return result
     }
 
-    public mutating func consume(_ pcm: Data) -> [GateEvent] {
+    public mutating func consume(_ pcm: Data, capturedAt: Double? = nil) -> [GateEvent] {
         guard !pcm.isEmpty, pcm.count % 2 == 0 else { return [] }
         let seconds = Double(pcm.count) / Double(bytesPerSecond)
         let power: Double = pcm.withUnsafeBytes { bytes in
@@ -50,6 +52,17 @@ public struct SpeechGate {
             return sum / Double(pcm.count / 2)
         }
         let level = 10 * log10(max(power, 1e-16))
+        if let stamp = capturedAt, stamp.isFinite, stamp > 0 {
+            if level > -50 {
+                if lastSpeechAt == nil || stamp - lastSpeechAt! > 1.25 {
+                    speechStartedAt = stamp
+                }
+                lastSpeechAt = stamp
+            }
+        } else {
+            // Replayed rotation buffers have no original clock evidence.
+            speechStartedAt = nil; lastSpeechAt = nil
+        }
         inputBytes += pcm.count; peak = max(peak, level)
         if active {
             outputBytes += pcm.count

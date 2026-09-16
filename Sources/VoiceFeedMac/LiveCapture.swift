@@ -123,6 +123,7 @@ final class LiveCapture: @unchecked Sendable {
             node.installTap(onBus:0, bufferSize:4096, format:nil) { buffer, _ in
                 do {
                     // Consume borrowed hardware samples before the callback returns.
+                    let detectedAt = Date().timeIntervalSince1970
                     let audio = try converter.convert(buffer)
                     self.queue.async {
                         guard !self.terminal, !self.failureReporting, generation == self.hardwareGeneration else { return }
@@ -146,7 +147,7 @@ final class LiveCapture: @unchecked Sendable {
                             self.packets.append(["type": "capture.heartbeat"])
                             DispatchQueue.main.async(execute: self.onReady)
                         }
-                        self.enqueue(audio)
+                        self.enqueue(audio, capturedAt: detectedAt)
 
                     }
                 } catch { self.queue.async { if generation == self.hardwareGeneration { self.fail(error) } } }
@@ -194,11 +195,14 @@ final class LiveCapture: @unchecked Sendable {
             do { try capture() } catch { fail(error) }
         }
     }
-    private func enqueue(_ audio: Data) {
+    private func enqueue(_ audio: Data, capturedAt: Double? = nil) {
         if packets.count >= 600 { failMessage("Audio upload stalled; microphone stopped before its buffer overflowed"); return }
-        for event in gate.consume(audio) {
+        for event in gate.consume(audio, capturedAt: capturedAt) {
             switch event {
-            case .audio(let data): packets.append(["type": "input_audio_buffer.append", "audio": data.base64EncodedString()])
+            case .audio(let data):
+                var packet: [String: Any] = ["type": "input_audio_buffer.append", "audio": data.base64EncodedString()]
+                if let stamp = gate.speechStartedAt { packet["device_speech_started_at"] = stamp }
+                packets.append(packet)
             case .pause: packets.append(["type": "capture.pause"])
             }
         }
