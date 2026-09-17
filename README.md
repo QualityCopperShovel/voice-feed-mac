@@ -320,3 +320,12 @@ of quiet starts a new observation. Untimestamped rotation buffers omit timing
 instead of inventing a new capture time. Voice Feed strips this metadata before
 provider forwarding. Consumers can measure device-to-display speech-start bounds;
 this is not individual-word audio alignment.
+
+## Shared Apple build validation
+
+The opt-in `apple-client-validation.yml` workflow reuses this repository's Mac
+runner access for small external Apple clients, including FairyStack's native
+client. Source remains in its canonical app repository. Dispatch supplies a
+credential-free archive, its SHA-256, and its immutable source commit; the run
+retains that receipt with simulator tests and screenshots. It receives no signing
+secrets, never changes Voice Feed's releases, and has a 20-minute deadline.

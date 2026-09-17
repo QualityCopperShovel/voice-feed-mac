@@ -1,0 +1,69 @@
+name: Validate Apple client source
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_base64:
+        description: Base64 gzip tar of the native client, without credentials
+        required: true
+        type: string
+      source_sha256:
+        description: SHA-256 of the compressed archive
+        required: true
+        type: string
+      source_revision:
+        description: Immutable canonical source Git revision
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Verify and unpack source
+        env:
+          SOURCE_BASE64: ${{ inputs.source_base64 }}
+          SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          python3 - <<'PY'
+          import base64,hashlib,io,os,pathlib,re,tarfile
+          revision=os.environ['SOURCE_REVISION']
+          assert re.fullmatch('[0-9a-f]{40}',revision), 'Expected full Git revision'
+          data=base64.b64decode(os.environ['SOURCE_BASE64'],validate=True)
+          assert hashlib.sha256(data).hexdigest()==os.environ['SOURCE_SHA256'], 'Source checksum mismatch'
+          assert len(data)<50000, 'Source archive exceeds dispatch bound'
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
+            for item in archive.getmembers():
+              path=pathlib.PurePosixPath(item.name)
+              assert not path.is_absolute() and '..' not in path.parts and (item.isfile() or item.isdir()), 'Unsafe source archive'
+            archive.extractall('native-client')
+          pathlib.Path('source-receipt.txt').write_text('source_revision='+revision+'\narchive_sha256='+os.environ['SOURCE_SHA256']+'\n')
+          PY
+      - name: Test core contracts
+        working-directory: native-client
+        run: swift test
+      - name: Build iPhone and test simulator interactions
+        working-directory: native-client
+        run: |
+          python3 generate_project.py
+          xcodebuild -version
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for rows in d["devices"].values() for x in rows if x["name"].startswith("iPhone")))')
+          xcodebuild -project FairyStack.xcodeproj -scheme FairyStack -destination 'generic/platform=iOS' -configuration Release CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project FairyStack.xcodeproj -scheme FairyStack -destination "platform=iOS Simulator,id=$device" -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcrun xcresulttool export attachments --path TestResults.xcresult --output-path screenshots
+      - name: Retain immutable validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-client-validation-${{ inputs.source_revision }}
+          path: |
+            source-receipt.txt
+            native-client/TestResults.xcresult
+            native-client/screenshots
+          if-no-files-found: error
+          retention-days: 14
