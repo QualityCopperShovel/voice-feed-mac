@@ -329,3 +329,10 @@ client. Source remains in its canonical app repository. Dispatch supplies a
 credential-free archive, its SHA-256, and its immutable source commit; the run
 retains that receipt with simulator tests and screenshots. It receives no signing
 secrets, never changes Voice Feed's releases, and has a 20-minute deadline.
+
+### 1.5.16 audio sample timing
+
+Live PCM packets include `device_audio_ended_at`, captured before the upload
+queue. Packet duration locates the first sample, including gate pre-roll.
+Untimestamped rotation audio omits the field. Voice Feed can align sampled
+words without substituting receipt time or the start of a long speech burst.

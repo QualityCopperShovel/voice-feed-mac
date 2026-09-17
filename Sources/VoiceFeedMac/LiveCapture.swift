@@ -202,6 +202,11 @@ final class LiveCapture: @unchecked Sendable {
             case .audio(let data):
                 var packet: [String: Any] = ["type": "input_audio_buffer.append", "audio": data.base64EncodedString()]
                 if let stamp = gate.speechStartedAt { packet["device_speech_started_at"] = stamp }
+                // End of the captured samples, before gate/network queues. Pre-roll
+                // shares this endpoint; replayed rotation audio has no clock evidence.
+                if let stamp = capturedAt, stamp.isFinite, stamp > 0 {
+                    packet["device_audio_ended_at"] = stamp
+                }
                 packets.append(packet)
             case .pause: packets.append(["type": "capture.pause"])
             }
