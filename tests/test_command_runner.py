@@ -64,3 +64,10 @@ l.fs_command_run(l.fs_command_create(),sys.argv[2].encode(),b'/tmp',20)
         time.sleep(1.2);self.assertFalse(marker.exists())
 
 if __name__=='__main__':unittest.main()
+
+class SourceInstallerTests(unittest.TestCase):
+    def test_installer_includes_every_runtime_source(self):
+        installer=(ROOT/'install.sh').read_text()
+        for source in (ROOT/'Sources').rglob('*'):
+            if source.is_file() and source.suffix in {'.swift','.m','.h','.c'}:
+                self.assertIn(str(source.relative_to(ROOT)),installer)
