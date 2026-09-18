@@ -85,6 +85,7 @@ final class FairyStackCommands: NSObject, @unchecked Sendable {
     }
     func stop() {
         generation += 1; timer?.invalidate(); timer = nil; requestTask?.cancel(); requestTask = nil; busy = false
+        pendingResult = nil; reportDeadline = nil
         if let runner { fs_command_cancel(runner) }
     }
     private func disconnect() {
