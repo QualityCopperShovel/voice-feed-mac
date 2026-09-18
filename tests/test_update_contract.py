@@ -84,6 +84,14 @@ class UpdateContractTests(unittest.TestCase):
         self.assertIn('Finishing last words', main)
         self.assertIn('onComplete:', main)
 
+    def test_provider_retry_uses_existing_buffer_not_capture_teardown(self):
+        source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
+        branch = source.split('} else if type == "error" {', 1)[1].split('if self.transportRecovery.active', 1)[0]
+        self.assertIn('TransportRecovery.providerFailure', branch)
+        self.assertIn('self.recoverTransport(recoverable, stage: "provider"); return', branch)
+        self.assertNotIn('failMessage', branch)
+        self.assertNotIn('stopEngine', branch)
+
     def test_network_rotation_does_not_stop_the_microphone(self):
         source = (ROOT / 'Sources/VoiceFeedMac/LiveCapture.swift').read_text()
         rotation = source[source.index('private func rotate(stage:'):source.index('private func reconnectSocket()')]

@@ -18,6 +18,12 @@ public struct TransportRecovery {
         }
         return false
     }
+    /// Only the server's explicit recoverable-provider code may preserve capture.
+    public static func providerFailure(code: String?, message: String) -> NSError? {
+        guard code == "provider_retry" else { return nil }
+        return NSError(domain: "VoiceFeed", code: 503,
+                       userInfo: [NSLocalizedDescriptionKey: message, "voiceFeedCode": code!])
+    }
     public mutating func interrupted(now: TimeInterval, deadline existingDeadline: TimeInterval? = nil) {
         if deadline == nil { deadline = min(now + 45, existingDeadline ?? now + 45) }
         attemptStarted = nil

@@ -2,6 +2,24 @@ import XCTest
 @testable import CaptureCore
 
 final class TransportRecoveryTests: XCTestCase {
+    func testExplicitProviderFailurePreservesRecoveryBufferAndDeadline() throws {
+        let error = try XCTUnwrap(TransportRecovery.providerFailure(code: "provider_retry", message: "Provider interrupted"))
+        XCTAssertTrue(TransportRecovery.retryable(error))
+        var recovery = TransportRecovery()
+        var buffer = RotationBuffer()
+        recovery.interrupted(now: 10)
+        for index in 0..<100 { try buffer.append(Data([UInt8(index), 0])) }
+        recovery.interrupted(now: 20)
+        XCTAssertEqual(recovery.deadline, 55)
+        recovery.complete()
+        XCTAssertEqual(buffer.take(), (0..<100).map { Data([UInt8($0), 0]) })
+        XCTAssertTrue(buffer.take().isEmpty)
+    }
+    func testUntypedAndPermanentServerFailuresCannotReplay() {
+        for code in [nil as String?, "capture_failed", "permission_denied", "provider_credit_exhausted", ""] {
+            XCTAssertNil(TransportRecovery.providerFailure(code: code, message: "Do not retry"))
+        }
+    }
     func testTransientSocketFailureRetriesWithoutResettingOverallDeadline() {
         var recovery = TransportRecovery()
         recovery.interrupted(now: 100)

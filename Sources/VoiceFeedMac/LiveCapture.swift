@@ -352,6 +352,12 @@ final class LiveCapture: @unchecked Sendable {
                         if self.rotating { self.reconnectSocket(); return }
                         self.finish(); DispatchQueue.main.async(execute:self.onComplete); return
                     } else if type == "error" {
+                        let providerError = event["error"] as? [String: Any]
+                        if let recoverable = TransportRecovery.providerFailure(
+                            code: providerError?["code"] as? String,
+                            message: providerError?["message"] as? String ?? "Transcription connection interrupted") {
+                            self.recoverTransport(recoverable, stage: "provider"); return
+                        }
                         if self.transportRecovery.active, (event["error"] as? [String:Any])?["code"] as? String == "stream_busy" {
                             self.recoverTransport(NSError(domain:"VoiceFeed", code:409, userInfo:["voiceFeedCode":"stream_busy"]), stage:"stream_busy"); return
                         }

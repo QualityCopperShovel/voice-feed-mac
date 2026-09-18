@@ -64,8 +64,7 @@ removes that duplicate once macOS owns the login item.
 
 Version 1.4.1 streams PCM audio continuously through Voice Feed and BrightWrapper
 using gpt-live-transcribe. Text arrives during speech; stop and quit drain the
-pending final result before releasing the microphone lease. No local recordings
-are created. A bounded queue, connection/send/heartbeat deadlines, and explicit
+pending final result before releasing the microphone lease. Private rolling recovery audio remains on the Mac for up to 30 minutes. A bounded queue, connection/send/heartbeat deadlines, and explicit
 failure status prevent silent audio loss during a stalled connection. Sessions
 rotate after 19 minutes through the same drain path.
 
@@ -336,3 +335,11 @@ Live PCM packets include `device_audio_ended_at`, captured before the upload
 queue. Packet duration locates the first sample, including gate pre-roll.
 Untimestamped rotation audio omits the field. Voice Feed can align sampled
 words without substituting receipt time or the start of a long speech burst.
+
+## Provider recovery (1.5.17)
+Explicit recoverable transcription-server errors now use the same bounded
+45-second transport recovery as network disconnects. The microphone remains
+active; new frames are buffered and sent in order after reconnection. Permanent
+errors still stop capture visibly. Already-sent, unconfirmed audio is not
+blindly replayed: doing so could duplicate dictated text. The local recent-audio
+files remain the recovery source for that gap; this is not exactly-once delivery.
