@@ -11,7 +11,7 @@ import CaptureAudio
 // Voice Feed streams continuous microphone audio over an authenticated WebSocket.
 // It keeps bounded local recovery audio and drains final transcription before stopping.
 let baseURL = URL(string: "https://voice-feed.aisloppy.com")!
-let clientVersion = "1.6.0"
+let clientVersion = "1.6.1"
 let captureLog = Logger(subsystem: "com.aisloppy.voice-feed", category: "capture")
 // A compact template rendering of the Voice Feed microphone-and-text mark.
 // Drawing it locally keeps the menu-bar asset crisp at native scale and lets
@@ -152,7 +152,6 @@ final class API {
 // AppDelegate owns the menu-bar UI, account pairing, exclusive capture lease,
 // microphone permission, and the bounded recording loop.
 final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
-    let commands = FairyStackCommands()
     let api = API(), keychain = Keychain(), statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     var live: LiveCapture?, leaseTimer: Timer?, reconnectWorkItem: DispatchWorkItem?
     var connectionID = UUID().uuidString.replacingOccurrences(of: "-", with: ""), listening = false, desiredListening = false, leaseRenewalInFlight = false, hasEstablishedLease = false, reconnectAttempt = 0, statusRevision = 0
@@ -270,7 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     let legacyLaunchAgent = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/com.aisloppy.voice-feed.plist")
     let diagnosticStatus = NSMenuItem(title: "Diagnostics: waiting for connection", action: nil, keyEquivalent: "")
     var diagnosticTimer: Timer?
-    func applicationWillTerminate(_ notification: Notification) { commands.stop(); MacDiagnostics.shared.finish() }
+    func applicationWillTerminate(_ notification: Notification) { MacDiagnostics.shared.finish() }
     @objc func openDiagnostics() { NSWorkspace.shared.open(MacDiagnostics.shared.directory) }
     @objc func openCrashReports() {
         NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports"))
@@ -295,7 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         status.action = nil
         loginItem.target = self
         audioRecoveryMenu.target = self; refreshAudioRecoveryMenu()
-        let menu = NSMenu(); [status, captureDetails, .separator(), connect, .separator(), loginItem, audioRecoveryMenu, devices, .separator(), commands.menu, commands.activityMenu, .separator(), update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
+        let menu = NSMenu(); [status, captureDetails, .separator(), connect, .separator(), loginItem, audioRecoveryMenu, devices, update, version, recoveryAudio, diagnostics, crashReports, diagnosticStatus, quitItem].forEach(menu.addItem); statusItem.menu = menu
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification, object:nil, queue:.main) { [weak self] _ in self?.willSleep() })
         workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didWakeNotification, object:nil, queue:.main) { [weak self] _ in self?.didWake() })
         api.token = keychain.load(); refreshMenu()
@@ -309,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
                 update.title = "Previous update restart was interrupted — click to retry"
             }
         }
-        commands.start()
+        retireLegacyCommandConnection()
         updater.start()
         if api.token != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.startListening() } }
         else { DispatchQueue.main.async { self.showFirstRunGuide() } }

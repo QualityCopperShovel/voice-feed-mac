@@ -12,13 +12,12 @@ let package = Package(
     ],
     targets: [
         .target(name: "CaptureCore"),
-        .target(name: "CommandRunner", publicHeadersPath: "include"),
         .target(name: "AudioRecoveryProtocol"),
         .executableTarget(name: "VoiceFeedAudioRecovery", dependencies: ["CaptureCore", "AudioRecoveryProtocol"]),
         .target(name: "AudioSafety", publicHeadersPath: "include"),
         .target(name: "CaptureAudio", dependencies: ["AudioSafety", "CaptureCore"]),
         .testTarget(name: "CaptureAudioTests", dependencies: ["CaptureAudio", "AudioSafety", "CaptureCore"]),
-        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore", "CaptureAudio", "AudioSafety", "AudioRecoveryProtocol", "CommandRunner"]),
+        .executableTarget(name: "VoiceFeedMac", dependencies: ["CaptureCore", "CaptureAudio", "AudioSafety", "AudioRecoveryProtocol"]),
         .testTarget(name: "CaptureCoreTests", dependencies: ["CaptureCore"]),
     ]
 )
