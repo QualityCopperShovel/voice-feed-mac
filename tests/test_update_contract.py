@@ -126,3 +126,14 @@ class UpdateContractTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ProductBoundaryTests(unittest.TestCase):
+    def test_voice_feed_has_no_command_runner(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse((root / 'Sources/CommandRunner').exists())
+        self.assertFalse((root / 'Sources/VoiceFeedMac/FairyStackCommands.swift').exists())
+        source = (root / 'Sources/VoiceFeedMac/main.swift').read_text()
+        self.assertNotIn('commands.menu', source)
+        self.assertIn('retireLegacyCommandConnection()', source)
