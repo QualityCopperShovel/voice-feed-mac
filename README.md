@@ -343,3 +343,27 @@ active; new frames are buffered and sent in order after reconnection. Permanent
 errors still stop capture visibly. Already-sent, unconfirmed audio is not
 blindly replayed: doing so could duplicate dictated text. The local recent-audio
 files remain the recovery source for that gap; this is not exactly-once delivery.
+
+## FairyStack Mac commands (1.6.0)
+
+Command access is separately paired and off by default. Voice capture tokens do
+not authorize it. Open your FairyStack `/companions` page, create a ten-minute
+connection code, then choose **FairyStack commands: Off…** in the Mac menu and
+paste it locally. Select a working directory and explicitly enable access.
+The directory is not a sandbox: commands have the logged-in user's permissions.
+No remote administrator approval or interactive password entry is provided.
+
+The device connects outbound over HTTPS using its own Keychain credential.
+Only exact device poll/report/revoke endpoints accept that credential. The
+FairyStack account's agents submit commands with explicit Mac, originating session,
+and app-box identity. The existing app-box route is never changed. Commands have
+stable mutation IDs, one claim, capped output, and an overall deadline up to 30
+minutes. Disconnects cancel local process groups; server-side lost claims become
+failed and are never retried. A separate watchdog stops the group if the menu app
+crashes. Processes deliberately detaching from their group are unsupported.
+
+The Mac menu exposes connection state, disconnect, and the private command
+activity folder. FairyStack `/companions#command-<id>` retains current receipts.
+Local output and server output are visible to the account; do not print secrets.
+An update restarts the helper and stops active commands. An installed laptop
+pairing and real iPhone installation are separate from CI verification.
