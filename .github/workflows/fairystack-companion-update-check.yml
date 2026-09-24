@@ -46,6 +46,18 @@ jobs:
             defaults write com.fairystack.companion workspaceWindowOpen -bool true
           fi
           open "$start"
+          if [ "$EXPECT_WINDOW" = true ]; then
+            cat > windows.swift <<'SWIFT'
+          import CoreGraphics
+          let pid = Int(CommandLine.arguments[1])!
+          let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+          print(list.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }.count)
+          SWIFT
+            windows() { xcrun swift windows.swift "$1"; }
+            sleep 8; old=$(pgrep -x FairyStackCompanion | head -1); before=$(windows "$old")
+            echo "on-screen windows before the update (pid $old): $before"
+            [ "$before" -ge 1 ] || { echo "window detector sees no window for the old build; check is not meaningful"; exit 1; }
+          fi
           for i in $(seq 1 60); do [ "$(version "$app")" = "$want" ] && [ ! -e "$HOME/Applications/FairyStack Companion.app" ] && break; sleep 5; done
           echo "installed version after update: $(version "$app")"
           [ "$(version "$app")" = "$want" ]
@@ -58,14 +70,8 @@ jobs:
           ps -o command= -p "$pid" | grep -q "/FairyStack.app/"
           [ ! -e "$HOME/Applications/FairyStack.previous.app" ] && [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]
           if [ "$EXPECT_WINDOW" = true ]; then
-            cat > windows.swift <<'SWIFT'
-          import CoreGraphics
-          let pid = Int(CommandLine.arguments[1])!
-          let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
-          print(list.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }.count)
-          SWIFT
             count=0
-            for i in $(seq 1 20); do count=$(xcrun swift windows.swift "$pid"); [ "$count" -ge 1 ] && break; sleep 3; done
+            for i in $(seq 1 20); do count=$(windows "$pid"); [ "$count" -ge 1 ] && break; sleep 3; done
             echo "on-screen FairyStack windows after the update: $count"
             [ "$count" -ge 1 ]
           fi
