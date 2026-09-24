@@ -1,0 +1,57 @@
+name: FairyStack for Windows self-update check
+# Installs an older published release with its window open and requires it to replace itself with the
+# version in fairystack.com's live windows-version.json, then reopen its window from the installed path.
+on:
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: Published version to start from (e.g. 1.0.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  update:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Install the older release and let it update itself
+        env:
+          FROM: ${{ inputs.from_version }}
+        run: |
+          if ($env:FROM -notmatch '^\d+\.\d+\.\d+$') { throw 'from_version must be MAJOR.MINOR.PATCH' }
+          $want = (Invoke-RestMethod -TimeoutSec 20 https://fairystack.com/assets/windows-version.json).version
+          "starting at $env:FROM, windows-version.json offers $want"
+          if ($want -eq $env:FROM) { throw 'the manifest does not offer a newer version' }
+          $setup = Join-Path $env:RUNNER_TEMP "FairyStack-Setup-$env:FROM.exe"
+          Invoke-WebRequest -TimeoutSec 180 -OutFile $setup "https://github.com/QualityCopperShovel/fairystack-companion/releases/download/windows-v$env:FROM/FairyStack-Setup-$env:FROM.exe"
+          $data = Join-Path $env:LOCALAPPDATA FairyStack
+          New-Item -ItemType Directory -Force $data | Out-Null
+          # The owner had the window open when the update arrived (example.com: no trial lease or sign-in side effects).
+          '{"origin":"https://example.com/","window_open":true}' | Set-Content (Join-Path $data settings.json)
+          $p = Start-Process $setup -PassThru
+          if (-not $p.WaitForExit(60000) -or $p.ExitCode -ne 0) { throw 'setup did not hand over to the installed copy' }
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\FairyStack\FairyStack.exe'
+          $version = { $v = (Get-Item $installed -ErrorAction SilentlyContinue).VersionInfo.FileVersion; if ($v) { $v -replace '\.0$','' } }
+          "installed at start: $(& $version)"
+          foreach ($i in 1..72) { if ((& $version) -eq $want) { break }; Start-Sleep 5 }
+          "installed version after update: $(& $version)"
+          if ((& $version) -ne $want) { Get-Content (Join-Path $data fairystack.log) -ErrorAction SilentlyContinue; throw 'the app did not update itself' }
+          $window = $null
+          foreach ($i in 1..30) {
+            $window = Get-Process FairyStack -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $installed -and $_.MainWindowTitle }
+            if ($window) { break }; Start-Sleep 2
+          }
+          Get-Content (Join-Path $data fairystack.log) -ErrorAction SilentlyContinue
+          if (-not $window) { throw 'the updated build did not reopen its window' }
+          "running pid $($window.Id): $($window.Path) window '$($window.MainWindowTitle)'"
+          if (@(Get-Process FairyStack).Count -ne 1) { throw 'old and new builds are both running' }
+          foreach ($i in 1..10) { if (-not (Test-Path (Join-Path (Split-Path $installed) FairyStack.previous.exe))) { break }; Start-Sleep 1 }
+          if (Test-Path (Join-Path (Split-Path $installed) FairyStack.previous.exe)) { throw 'the previous build was left behind' }
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\FairyStack'
+          if ($entry.DisplayVersion -ne $want) { throw "Apps & features still shows $($entry.DisplayVersion)" }
+          Get-Process FairyStack | Stop-Process -Force
+          "PASS: $env:FROM updated itself to $want and reopened its window"
