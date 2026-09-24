@@ -8,6 +8,11 @@ on:
         description: Published version to start from (e.g. 1.1.0)
         required: true
         type: string
+      expect_window:
+        description: Start with an open FairyStack window and require the updated build to show it again
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -18,6 +23,7 @@ jobs:
       - name: Install the older signed app and let it update itself
         env:
           FROM: ${{ inputs.from_version }}
+          EXPECT_WINDOW: ${{ inputs.expect_window }}
         run: |
           set -euo pipefail
           [[ "$FROM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -34,6 +40,11 @@ jobs:
           app="$HOME/Applications/FairyStack.app"
           version() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$1/Contents/Info.plist" 2>/dev/null || true; }
           [ "$(version "$start")" = "$FROM" ]
+          if [ "$EXPECT_WINDOW" = true ]; then
+            # The owner had the FairyStack window open when the update arrived.
+            defaults write com.fairystack.companion workspaceOrigin https://trial-01.fairystack.com
+            defaults write com.fairystack.companion workspaceWindowOpen -bool true
+          fi
           open "$start"
           for i in $(seq 1 60); do [ "$(version "$app")" = "$want" ] && [ ! -e "$HOME/Applications/FairyStack Companion.app" ] && break; sleep 5; done
           echo "installed version after update: $(version "$app")"
@@ -46,4 +57,16 @@ jobs:
           echo "running pid $pid: $(ps -o command= -p "$pid")"
           ps -o command= -p "$pid" | grep -q "/FairyStack.app/"
           [ ! -e "$HOME/Applications/FairyStack.previous.app" ] && [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]
+          if [ "$EXPECT_WINDOW" = true ]; then
+            cat > windows.swift <<'SWIFT'
+          import CoreGraphics
+          let pid = Int(CommandLine.arguments[1])!
+          let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+          print(list.filter { ($0[kCGWindowOwnerPID as String] as? Int) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }.count)
+          SWIFT
+            count=0
+            for i in $(seq 1 20); do count=$(xcrun swift windows.swift "$pid"); [ "$count" -ge 1 ] && break; sleep 3; done
+            echo "on-screen FairyStack windows after the update: $count"
+            [ "$count" -ge 1 ]
+          fi
           echo "PASS: $FROM updated itself to $want and relaunched from FairyStack.app"
