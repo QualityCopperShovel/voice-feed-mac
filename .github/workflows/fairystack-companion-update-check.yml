@@ -42,7 +42,7 @@ jobs:
           [ "$(version "$start")" = "$FROM" ]
           if [ "$EXPECT_WINDOW" = true ]; then
             # The owner had the FairyStack window open when the update arrived.
-            defaults write com.fairystack.companion workspaceOrigin https://trial-01.fairystack.com
+            defaults write com.fairystack.companion workspaceOrigin https://example.com  # no trial lease or login side effects
             defaults write com.fairystack.companion workspaceWindowOpen -bool true
           fi
           open "$start"
