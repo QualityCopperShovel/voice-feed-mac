@@ -1,4 +1,4 @@
-name: FairyStack Companion self-update check
+name: FairyStack for Mac self-update check
 # Installs an older published signed Companion, launches it, and requires it to
 # replace itself with the version in fairystack.com's live update manifest.
 on:
@@ -21,22 +21,29 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$FROM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          want=$(curl -fsS --max-time 20 https://fairystack.com/assets/mac-companion-version.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
-          echo "starting at $FROM, manifest offers $want"
+          # Builds before 1.2 were "FairyStack Companion.app" on the legacy manifest; they move to FairyStack.app.
+          legacy=false; [ "$(printf '%s\n1.2.0\n' "$FROM" | sort -V | head -1)" != 1.2.0 ] && legacy=true
+          if $legacy; then manifest=mac-companion-version.json; old_name="FairyStack Companion"; old_zip="FairyStack-Companion-$FROM.zip"
+          else manifest=mac-version.json; old_name=FairyStack; old_zip="FairyStack-$FROM.zip"; fi
+          want=$(curl -fsS --max-time 20 "https://fairystack.com/assets/$manifest" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
+          echo "starting at $FROM, $manifest offers $want"
           [ "$want" != "$FROM" ]
-          curl -fsSL --max-time 120 -o old.zip "https://fairystack.com/assets/FairyStack-Companion-$FROM.zip"
+          curl -fsSL --max-time 120 -o old.zip "https://fairystack.com/assets/$old_zip"
           mkdir -p "$HOME/Applications"; ditto -x -k old.zip "$HOME/Applications"
-          app="$HOME/Applications/FairyStack Companion.app"
-          version() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true; }
-          [ "$(version)" = "$FROM" ]
-          open "$app"
-          for i in $(seq 1 60); do [ "$(version)" = "$want" ] && break; sleep 5; done
-          echo "installed version after update: $(version)"
-          [ "$(version)" = "$want" ]
+          start="$HOME/Applications/$old_name.app"
+          app="$HOME/Applications/FairyStack.app"
+          version() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$1/Contents/Info.plist" 2>/dev/null || true; }
+          [ "$(version "$start")" = "$FROM" ]
+          open "$start"
+          for i in $(seq 1 60); do [ "$(version "$app")" = "$want" ] && [ ! -e "$HOME/Applications/FairyStack Companion.app" ] && break; sleep 5; done
+          echo "installed version after update: $(version "$app")"
+          [ "$(version "$app")" = "$want" ]
+          [ ! -e "$HOME/Applications/FairyStack Companion.app" ]
           codesign --verify --deep --strict -R '=anchor apple generic and identifier "com.fairystack.companion" and certificate leaf[subject.OU] = "7ZPTPEXGRC"' "$app"
           spctl --assess --type execute "$app"
           for i in $(seq 1 12); do pgrep -x FairyStackCompanion >/dev/null && break; sleep 5; done
           pid=$(pgrep -x FairyStackCompanion | head -1)
           echo "running pid $pid: $(ps -o command= -p "$pid")"
-          [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]
-          echo "PASS: $FROM updated itself to $want and relaunched"
+          ps -o command= -p "$pid" | grep -q "/FairyStack.app/"
+          [ ! -e "$HOME/Applications/FairyStack.previous.app" ] && [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]
+          echo "PASS: $FROM updated itself to $want and relaunched from FairyStack.app"
