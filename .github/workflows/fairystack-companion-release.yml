@@ -189,12 +189,20 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_NOTARY_PRIVATE_KEY_P8" > "$key"
           python3 scripts/run_with_timeout.py 1000 xcrun notarytool submit "$upload" --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" --wait --timeout 15m
-          rm -f "$key"
           python3 scripts/run_with_timeout.py 180 xcrun stapler staple "$app"
           xcrun stapler validate "$app"
           python3 scripts/run_with_timeout.py 180 spctl --assess --type execute --verbose=2 "$app"
           mkdir -p dist
           ditto -c -k --keepParent "$app" "dist/${name// /-}-$version.zip"
+          # Ordinary download: drag the app onto the Applications alias. Signed, notarized and stapled itself.
+          dmg_root="$RUNNER_TEMP/dmg"; mkdir -p "$dmg_root"; ditto "$app" "$dmg_root/$app"; ln -s /Applications "$dmg_root/Applications"
+          dmg="dist/${name// /-}-$version.dmg"
+          python3 scripts/run_with_timeout.py 300 hdiutil create -volname "$name" -srcfolder "$dmg_root" -fs HFS+ -format UDZO -ov "$dmg"
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+          python3 scripts/run_with_timeout.py 1000 xcrun notarytool submit "$dmg" --key "$key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" --wait --timeout 15m
+          python3 scripts/run_with_timeout.py 180 xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          python3 scripts/run_with_timeout.py 180 spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           if [ "${{ inputs.legacy_bridge }}" = true ]; then
             # Pre-1.2 updaters stage exactly this folder name; the signature does not cover it.
             mkdir bridge && ditto "$app" "bridge/FairyStack Companion.app"
@@ -202,7 +210,8 @@ jobs:
             python3 scripts/run_with_timeout.py 180 spctl --assess --type execute "bridge/FairyStack Companion.app"
             ditto -c -k --keepParent "bridge/FairyStack Companion.app" "dist/FairyStack-Companion-$version.zip"
           fi
-          shasum -a 256 dist/*.zip > dist/archive.sha256
+          rm -f "$key"
+          shasum -a 256 dist/*.zip dist/*.dmg > dist/archive.sha256
           cp source-receipt.txt dist/
       - uses: actions/upload-artifact@v4
         with:
