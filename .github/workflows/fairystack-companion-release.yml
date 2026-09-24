@@ -73,6 +73,9 @@ jobs:
           PY
       - name: Test process ownership and package contracts
         run: python3 -m unittest discover -s tests -v
+      - name: Native window tests (WebKit routing, file promises)
+        run: |
+          if [ -d Tests ]; then xcrun swift test; fi
       - name: Build and exercise launch
         run: |
           xcrun swift build -c release
