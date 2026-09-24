@@ -103,6 +103,9 @@ jobs:
           if (@(Get-Process FairyStack | Where-Object Path -eq $installed).Count -ne 1) { throw 'more than one FairyStack is running' }
           Get-Process FairyStack | Stop-Process -Force
           "PASS: installed $version, window open, links registered, single instance"
+      - name: FairyStack log (on failure)
+        if: failure()
+        run: Get-Content (Join-Path $env:LOCALAPPDATA 'FairyStack\fairystack.log') -ErrorAction SilentlyContinue
       - name: Package
         run: |
           Get-FileHash dist/*.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist/archive.sha256
