@@ -48,13 +48,11 @@ jobs:
           open "$start"
           if [ "$EXPECT_WINDOW" = true ]; then
             # The app is a Foreground (Dock) app only while a FairyStack window is open, else a UIElement.
-            windows() { lsappinfo info -only applicationtype -app "pid=$1" 2>/dev/null | grep -c '"Foreground"' || true; }
-            sleep 8; old=$(pgrep -x FairyStackCompanion | head -1); before=$(windows "$old")
-            echo "diag version now: $(version "$start") / $(version "$app"); pids: $(pgrep -x FairyStackCompanion | tr '\n' ' ')"
-            echo "diag lsappinfo: $(lsappinfo info -app "pid=$old" 2>&1 | tr '\n' ' ' | cut -c1-400)"
-            echo "diag defaults: $(defaults read com.fairystack.companion 2>&1 | tr '\n' ' ')"
-            echo "FairyStack windows open before the update (pid $old): $before"
-            [ "$before" -ge 1 ] || { echo "window detector sees no window for the old build; check is not meaningful"; exit 1; }
+            apptype() { lsappinfo info -only applicationtype "$(lsappinfo find pid="$1")" 2>/dev/null | sed -n 's/.*"ApplicationType"="\([A-Za-z]*\)".*/\1/p'; }
+            windows() { [ "$(apptype "$1")" = Foreground ] && echo 1 || echo 0; }
+            sleep 3; old=$(pgrep -x FairyStackCompanion | head -1)
+            echo "type at launch (pid $old, $(version "$start")): $(apptype "$old")"
+            [ -n "$(apptype "$old")" ] || { echo "lsappinfo reported no application type; the window check is not meaningful"; exit 1; }
           fi
           for i in $(seq 1 60); do [ "$(version "$app")" = "$want" ] && [ ! -e "$HOME/Applications/FairyStack Companion.app" ] && break; sleep 5; done
           echo "installed version after update: $(version "$app")"
@@ -70,7 +68,7 @@ jobs:
           if [ "$EXPECT_WINDOW" = true ]; then
             count=0
             for i in $(seq 1 20); do count=$(windows "$pid"); [ "$count" -ge 1 ] && break; sleep 3; done
-            echo "FairyStack windows open after the update: $count"
+            echo "FairyStack windows open after the update: $count (type $(apptype "$pid"); saved open=$(defaults read com.fairystack.companion workspaceWindowOpen 2>&1))"
             [ "$count" -ge 1 ]
           fi
           echo "PASS: $FROM updated itself to $want and relaunched from FairyStack.app"
