@@ -50,6 +50,9 @@ jobs:
             # The app is a Foreground (Dock) app only while a FairyStack window is open, else a UIElement.
             windows() { lsappinfo info -only applicationtype -app "pid=$1" 2>/dev/null | grep -c '"Foreground"' || true; }
             sleep 8; old=$(pgrep -x FairyStackCompanion | head -1); before=$(windows "$old")
+            echo "diag version now: $(version "$start") / $(version "$app"); pids: $(pgrep -x FairyStackCompanion | tr '\n' ' ')"
+            echo "diag lsappinfo: $(lsappinfo info -app "pid=$old" 2>&1 | tr '\n' ' ' | cut -c1-400)"
+            echo "diag defaults: $(defaults read com.fairystack.companion 2>&1 | tr '\n' ' ')"
             echo "FairyStack windows open before the update (pid $old): $before"
             [ "$before" -ge 1 ] || { echo "window detector sees no window for the old build; check is not meaningful"; exit 1; }
           fi
