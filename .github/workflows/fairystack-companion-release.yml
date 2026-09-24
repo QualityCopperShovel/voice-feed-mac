@@ -3,8 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       source_base64:
-        description: Credential-free gzip tar of FairyStack native/mac
-        required: true
+        description: Credential-free gzip tar of FairyStack native/mac (small sources only)
+        required: false
+        type: string
+      source_url:
+        description: Published FairyStack source archive (https://fairystack.com/assets/FairyStack-Companion-*-source.*.zip)
+        required: false
         type: string
       source_sha256:
         description: SHA-256 of archive
@@ -36,19 +40,35 @@ jobs:
         working-directory: .
         env:
           SOURCE: ${{ inputs.source_base64 }}
+          SOURCE_URL: ${{ inputs.source_url }}
           SHA: ${{ inputs.source_sha256 }}
           REVISION: ${{ inputs.source_revision }}
         run: |
           python3 - <<'PY'
-          import base64,hashlib,io,os,pathlib,re,tarfile
-          data=base64.b64decode(os.environ['SOURCE'],validate=True)
-          assert len(data)<48000 and hashlib.sha256(data).hexdigest()==os.environ['SHA']
+          import base64,hashlib,io,os,pathlib,re,tarfile,urllib.request,zipfile
           assert re.fullmatch('[a-f0-9]{40}',os.environ['REVISION'])
-          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
-              for item in archive.getmembers():
-                  p=pathlib.PurePosixPath(item.name)
-                  assert not p.is_absolute() and '..' not in p.parts and (item.isfile() or item.isdir())
-              archive.extractall('client')
+          url=os.environ.get('SOURCE_URL','')
+          if url:
+              assert not os.environ.get('SOURCE'), 'Provide source_url or source_base64, not both'
+              assert re.fullmatch(r'https://fairystack\.com/assets/FairyStack-Companion-[0-9.]+-source\.[0-9]+\.zip',url)
+              with urllib.request.urlopen(url,timeout=30) as response: data=response.read(2_000_001)
+              assert len(data)<=2_000_000 and hashlib.sha256(data).hexdigest()==os.environ['SHA']
+              prefix=url.rsplit('/',1)[1][:-len('.zip')]+'/'
+              with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                  for item in archive.infolist():
+                      p=pathlib.PurePosixPath(item.filename)
+                      assert item.filename.startswith(prefix) and not p.is_absolute() and '..' not in p.parts
+                      if item.is_dir(): continue
+                      target=pathlib.Path('client',*p.parts[1:]); target.parent.mkdir(parents=True,exist_ok=True)
+                      target.write_bytes(archive.read(item))
+          else:
+              data=base64.b64decode(os.environ['SOURCE'],validate=True)
+              assert len(data)<48000 and hashlib.sha256(data).hexdigest()==os.environ['SHA']
+              with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
+                  for item in archive.getmembers():
+                      p=pathlib.PurePosixPath(item.name)
+                      assert not p.is_absolute() and '..' not in p.parts and (item.isfile() or item.isdir())
+                  archive.extractall('client')
           pathlib.Path('client/source-receipt.txt').write_text('revision='+os.environ['REVISION']+'\nsha256='+os.environ['SHA']+'\n')
           PY
       - name: Test process ownership and package contracts
@@ -85,19 +105,35 @@ jobs:
         working-directory: .
         env:
           SOURCE: ${{ inputs.source_base64 }}
+          SOURCE_URL: ${{ inputs.source_url }}
           SHA: ${{ inputs.source_sha256 }}
           REVISION: ${{ inputs.source_revision }}
         run: |
           python3 - <<'PY'
-          import base64,hashlib,io,os,pathlib,re,tarfile
-          data=base64.b64decode(os.environ['SOURCE'],validate=True)
-          assert len(data)<48000 and hashlib.sha256(data).hexdigest()==os.environ['SHA']
+          import base64,hashlib,io,os,pathlib,re,tarfile,urllib.request,zipfile
           assert re.fullmatch('[a-f0-9]{40}',os.environ['REVISION'])
-          with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
-              for item in archive.getmembers():
-                  p=pathlib.PurePosixPath(item.name)
-                  assert not p.is_absolute() and '..' not in p.parts and (item.isfile() or item.isdir())
-              archive.extractall('client')
+          url=os.environ.get('SOURCE_URL','')
+          if url:
+              assert not os.environ.get('SOURCE'), 'Provide source_url or source_base64, not both'
+              assert re.fullmatch(r'https://fairystack\.com/assets/FairyStack-Companion-[0-9.]+-source\.[0-9]+\.zip',url)
+              with urllib.request.urlopen(url,timeout=30) as response: data=response.read(2_000_001)
+              assert len(data)<=2_000_000 and hashlib.sha256(data).hexdigest()==os.environ['SHA']
+              prefix=url.rsplit('/',1)[1][:-len('.zip')]+'/'
+              with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                  for item in archive.infolist():
+                      p=pathlib.PurePosixPath(item.filename)
+                      assert item.filename.startswith(prefix) and not p.is_absolute() and '..' not in p.parts
+                      if item.is_dir(): continue
+                      target=pathlib.Path('client',*p.parts[1:]); target.parent.mkdir(parents=True,exist_ok=True)
+                      target.write_bytes(archive.read(item))
+          else:
+              data=base64.b64decode(os.environ['SOURCE'],validate=True)
+              assert len(data)<48000 and hashlib.sha256(data).hexdigest()==os.environ['SHA']
+              with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
+                  for item in archive.getmembers():
+                      p=pathlib.PurePosixPath(item.name)
+                      assert not p.is_absolute() and '..' not in p.parts and (item.isfile() or item.isdir())
+                  archive.extractall('client')
           pathlib.Path('client/source-receipt.txt').write_text('revision='+os.environ['REVISION']+'\nsha256='+os.environ['SHA']+'\n')
           PY
       - uses: actions/download-artifact@v4
