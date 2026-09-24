@@ -1,0 +1,42 @@
+name: FairyStack Companion self-update check
+# Installs an older published signed Companion, launches it, and requires it to
+# replace itself with the version in fairystack.com's live update manifest.
+on:
+  workflow_dispatch:
+    inputs:
+      from_version:
+        description: Published version to start from (e.g. 1.1.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  update:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Install the older signed app and let it update itself
+        env:
+          FROM: ${{ inputs.from_version }}
+        run: |
+          set -euo pipefail
+          [[ "$FROM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          want=$(curl -fsS --max-time 20 https://fairystack.com/assets/mac-companion-version.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
+          echo "starting at $FROM, manifest offers $want"
+          [ "$want" != "$FROM" ]
+          curl -fsSL --max-time 120 -o old.zip "https://fairystack.com/assets/FairyStack-Companion-$FROM.zip"
+          mkdir -p "$HOME/Applications"; ditto -x -k old.zip "$HOME/Applications"
+          app="$HOME/Applications/FairyStack Companion.app"
+          version() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true; }
+          [ "$(version)" = "$FROM" ]
+          open "$app"
+          for i in $(seq 1 60); do [ "$(version)" = "$want" ] && break; sleep 5; done
+          echo "installed version after update: $(version)"
+          [ "$(version)" = "$want" ]
+          codesign --verify --deep --strict -R '=anchor apple generic and identifier "com.fairystack.companion" and certificate leaf[subject.OU] = "7ZPTPEXGRC"' "$app"
+          spctl --assess --type execute "$app"
+          for i in $(seq 1 12); do pgrep -x FairyStackCompanion >/dev/null && break; sleep 5; done
+          pid=$(pgrep -x FairyStackCompanion | head -1)
+          echo "running pid $pid: $(ps -o command= -p "$pid")"
+          [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]
+          echo "PASS: $FROM updated itself to $want and relaunched"
