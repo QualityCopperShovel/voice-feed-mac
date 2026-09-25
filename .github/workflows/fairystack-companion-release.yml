@@ -190,7 +190,16 @@ jobs:
           lipo -create "architectures/$executable-arm64" "architectures/$executable-x86_64" -output "$app/Contents/MacOS/$executable"
           chmod 755 "$app/Contents/MacOS/$executable"
           cp Info.plist "$app/Contents/Info.plist"
-          python3 "$GITHUB_WORKSPACE/scripts/codesign_with_retry.py" --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          signing_args=()
+          if [ -f Entitlements.plist ]; then
+            python3 -c 'import plistlib; d=plistlib.load(open("Entitlements.plist","rb")); assert d == {"com.apple.security.device.audio-input": True}, "Unexpected client entitlements"'
+            signing_args=(--entitlements Entitlements.plist)
+          fi
+          python3 "$GITHUB_WORKSPACE/scripts/codesign_with_retry.py" --force --options runtime --timestamp "${signing_args[@]}" --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          if [ -f Entitlements.plist ]; then
+            codesign -d --entitlements :- "$app" > /tmp/client-entitlements.plist
+            python3 -c 'import plistlib; d=plistlib.load(open("/tmp/client-entitlements.plist","rb")); assert d.get("com.apple.security.device.audio-input") is True'
+          fi
           codesign --verify --deep --strict --verbose=2 "$app"
           upload="$RUNNER_TEMP/companion-notarization.zip"
           ditto -c -k --keepParent "$app" "$upload"
