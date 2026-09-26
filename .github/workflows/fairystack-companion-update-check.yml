@@ -49,10 +49,7 @@ jobs:
           if [ "$EXPECT_WINDOW" = true ]; then
             # The app is a Foreground (Dock) app only while a FairyStack window is open, else a UIElement.
             apptype() { lsappinfo info -only applicationtype "$(lsappinfo find pid="$1")" 2>/dev/null | sed -n 's/.*"ApplicationType"="\([A-Za-z]*\)".*/\1/p'; }
-            windows() { [ "$(apptype "$1")" = Foreground ] && echo 1 || echo 0; }
-            sleep 3; old=$(pgrep -x FairyStackCompanion | head -1)
-            echo "type at launch (pid $old, $(version "$start")): $(apptype "$old")"
-            [ -n "$(apptype "$old")" ] || { echo "lsappinfo reported no application type; the window check is not meaningful"; exit 1; }
+
           fi
           for i in $(seq 1 60); do [ "$(version "$app")" = "$want" ] && [ ! -e "$HOME/Applications/FairyStack Companion.app" ] && break; sleep 5; done
           echo "installed version after update: $(version "$app")"
@@ -60,15 +57,20 @@ jobs:
           [ ! -e "$HOME/Applications/FairyStack Companion.app" ]
           codesign --verify --deep --strict -R '=anchor apple generic and identifier "com.fairystack.companion" and certificate leaf[subject.OU] = "7ZPTPEXGRC"' "$app"
           spctl --assess --type execute "$app"
-          for i in $(seq 1 12); do pgrep -x FairyStackCompanion >/dev/null && break; sleep 5; done
-          pid=$(pgrep -x FairyStackCompanion | head -1)
-          echo "running pid $pid: $(ps -o command= -p "$pid")"
-          ps -o command= -p "$pid" | grep -q "/FairyStack.app/"
-          [ ! -e "$HOME/Applications/FairyStack.previous.app" ] && [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]
-          if [ "$EXPECT_WINDOW" = true ]; then
-            count=0
-            for i in $(seq 1 20); do count=$(windows "$pid"); [ "$count" -ge 1 ] && break; sleep 3; done
-            echo "FairyStack windows open after the update: $count (type $(apptype "$pid"); saved open=$(defaults read com.fairystack.companion workspaceWindowOpen 2>&1))"
-            [ "$count" -ge 1 ]
-          fi
+          # Updating can replace the process before the first observation. Reacquire
+          # its PID on every sample, and wait for the replacement's terminal state.
+          ready=false; pid=''; kind=''
+          for i in $(seq 1 20); do
+            pid=$(pgrep -x FairyStackCompanion | head -1 || true)
+            kind=''
+            if [ -n "$pid" ] && ps -o command= -p "$pid" | grep -q "/FairyStack.app/" \
+                && [ ! -e "$HOME/Applications/FairyStack.previous.app" ] \
+                && [ ! -e "$HOME/Applications/FairyStack Companion.previous.app" ]; then
+              if [ "$EXPECT_WINDOW" = true ]; then kind=$(apptype "$pid" || true); else kind=not-requested; fi
+              if [ "$EXPECT_WINDOW" != true ] || [ "$kind" = Foreground ]; then ready=true; break; fi
+            fi
+            sleep 3
+          done
+          echo "relaunch result: ready=$ready pid=$pid application_type=$kind installed=$(version "$app")"
+          $ready || { echo "Timed out waiting for the updated FairyStack process, cleanup and restored window"; exit 1; }
           echo "PASS: $FROM updated itself to $want and relaunched from FairyStack.app"
