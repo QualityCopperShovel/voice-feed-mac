@@ -102,8 +102,9 @@ jobs:
           # App Store Connect requires the iOS 26 SDK; use the newest installed Xcode.
           xcode="$(ls -d /Applications/Xcode_[0-9]*.app | grep -v -i beta | sort -V | tail -1)"
           sudo xcode-select -s "$xcode"
-          xcodebuild -version
-          major="$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')"
+          version="$(xcodebuild -version)"
+          echo "$version"
+          major="$(sed -nE '1s/Xcode ([0-9]+).*/\1/p' <<<"$version")"
           [ "$major" -ge 26 ] || { echo "Xcode 26 or later is required; newest is $xcode"; exit 1; }
           bundle exec fastlane ios beta
       - name: Write build receipt
@@ -123,7 +124,7 @@ jobs:
             echo "marketing_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
             echo "archive_binary_sha256=$(shasum -a 256 build/FairyStack.xcarchive/Products/Applications/FairyStack.app/FairyStack | cut -d' ' -f1)"
             echo "ipa_sha256=$(shasum -a 256 build/FairyStack.ipa | cut -d' ' -f1)"
-            echo "xcode=$(xcodebuild -version | head -1)"
+            echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
           } > ../testflight-receipt.txt
           cat ../testflight-receipt.txt
       - name: Retain build receipt
