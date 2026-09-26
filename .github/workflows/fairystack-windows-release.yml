@@ -18,6 +18,7 @@ on:
         type: string
 permissions:
   contents: read
+  id-token: write
 jobs:
   build:
     runs-on: windows-2025
@@ -64,8 +65,57 @@ jobs:
           $file = (Get-Item publish/FairyStack.exe).VersionInfo.FileVersion
           if ($file -ne "$version.0") { throw "FileVersion $file does not match VERSION $version" }
           New-Item -ItemType Directory dist | Out-Null
-          Copy-Item publish/FairyStack.exe "dist/FairyStack-Setup-$version.exe"
           "{0:N1} MB" -f ((Get-Item publish/FairyStack.exe).Length / 1MB)
+      - name: Azure login with GitHub federated identity
+        timeout-minutes: 3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SIGNING_SUBSCRIPTION_ID }}
+      - name: Sign FairyStack with its verified publisher identity
+        timeout-minutes: 5
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: fairystackjessald
+          certificate-profile-name: fairystack
+          files: ${{ github.workspace }}\client\publish\FairyStack.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: FairyStack
+          description-url: https://fairystack.com/
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Verify publisher, trust and timestamp before packaging
+        timeout-minutes: 3
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $signature = Get-AuthenticodeSignature publish/FairyStack.exe
+          if ($signature.Status -ne 'Valid') { throw "Signature failed: $($signature.Status): $($signature.StatusMessage)" }
+          $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          if ($publisher -ine 'Jesse Aldridge') { throw "Unexpected signing publisher: $publisher" }
+          if (-not $signature.TimeStamperCertificate) { throw 'The signed binary has no trusted timestamp' }
+          Copy-Item publish/FairyStack.exe "dist/FairyStack-Setup-$version.exe"
+          @{
+            status = [string]$signature.Status
+            publisher = $publisher
+            signer_subject = $signature.SignerCertificate.Subject
+            certificate_thumbprint = $signature.SignerCertificate.Thumbprint
+            timestamp_subject = $signature.TimeStamperCertificate.Subject
+            sha256 = (Get-FileHash "dist/FairyStack-Setup-$version.exe" -Algorithm SHA256).Hash.ToLower()
+            verified_at = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json | Set-Content dist/signing-receipt.json
+          Get-Content dist/signing-receipt.json
       - name: Launch the real window (WebView2 load and user agent)
         run: |
           $report = Join-Path $env:RUNNER_TEMP smoke.json
@@ -86,6 +136,8 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode)" }
           $installed = Join-Path $env:LOCALAPPDATA 'Programs\FairyStack\FairyStack.exe'
           if ((Get-Item $installed).VersionInfo.FileVersion -ne "$version.0") { throw 'installed copy has the wrong version' }
+          if ((Get-FileHash $installed).Hash -ne (Get-FileHash $setup).Hash) { throw 'Installed binary differs from the signed installer' }
+          if ((Get-AuthenticodeSignature $installed).Status -ne 'Valid') { throw 'Installed binary signature is invalid' }
           $window = $null
           foreach ($i in 1..30) {
             $window = Get-Process FairyStack -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $installed -and $_.MainWindowTitle }

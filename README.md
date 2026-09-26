@@ -351,3 +351,19 @@ and removes its old command credential; capture credentials are unchanged.
 FairyStack Companion has its own bundle, Keychain entry, menu, login item and
 update channel. Pair it through the control origin's `/companions` page.
 No command runner or command polling remains in Voice Feed.
+
+## FairyStack Windows signing
+
+The Windows workflow signs the single-file app before packaging or installation tests.
+Azure Artifact Signing uses account `fairystackjessald`, Public Trust profile `fairystack`,
+and endpoint `https://eus.codesigning.azure.net/`. The verified publisher is Jesse Aldridge.
+The build rejects an invalid signature, a different publisher, or a missing timestamp,
+and includes `signing-receipt.json` with the verified installer hash in its artifact.
+It also verifies that installation preserves the signed binary byte for byte.
+
+GitHub OIDC authenticates application `46f5fe8a-b2bb-4fef-94ef-2179b4d4e5b1`
+through the repository's `main` branch. Its service principal has only Artifact Signing
+Certificate Profile Signer on this one profile. The three `AZURE_SIGNING_*` repository
+variables contain public client, tenant and subscription IDs; no client secret or
+operator login cache is used. Login, signing and verification have step deadlines
+inside the existing 30-minute build deadline.
