@@ -30,8 +30,8 @@ jobs:
           Invoke-WebRequest -TimeoutSec 180 -OutFile $setup "https://github.com/QualityCopperShovel/fairystack-companion/releases/download/windows-v$env:FROM/FairyStack-Setup-$env:FROM.exe"
           $data = Join-Path $env:LOCALAPPDATA FairyStack
           New-Item -ItemType Directory -Force $data | Out-Null
-          # The owner had the window open when the update arrived (example.com: no trial lease or sign-in side effects).
-          '{"origin":"https://example.com/","window_open":true}' | Set-Content (Join-Path $data settings.json)
+          # The owner had the window open when the update arrived (the Multiplayer sign-in page: no trial lease or submitted credentials).
+          '{"origin":"https://multi.fairystack.com/","window_open":true}' | Set-Content (Join-Path $data settings.json)
           $p = Start-Process $setup -PassThru
           if (-not $p.WaitForExit(60000) -or $p.ExitCode -ne 0) { throw 'setup did not hand over to the installed copy' }
           $installed = Join-Path $env:LOCALAPPDATA 'Programs\FairyStack\FairyStack.exe'

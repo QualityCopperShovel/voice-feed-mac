@@ -128,8 +128,8 @@ jobs:
           $version = (Get-Content VERSION -Raw).Trim()
           $data = Join-Path $env:LOCALAPPDATA FairyStack
           New-Item -ItemType Directory -Force $data | Out-Null
-          # A saved address opens the window straight away (example.com: no trial lease or sign-in side effects).
-          '{"origin":"https://example.com/","window_open":true}' | Set-Content (Join-Path $data settings.json)
+          # A saved address opens the window straight away (the Multiplayer sign-in page: no trial lease or submitted credentials).
+          '{"origin":"https://multi.fairystack.com/","window_open":true}' | Set-Content (Join-Path $data settings.json)
           $setup = Resolve-Path "dist/FairyStack-Setup-$version.exe"
           $p = Start-Process $setup -PassThru
           if (-not $p.WaitForExit(60000)) { throw 'setup did not hand over to the installed copy' }
