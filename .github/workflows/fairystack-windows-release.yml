@@ -16,6 +16,23 @@ on:
         description: Canonical FairyStack source revision
         required: true
         type: string
+      store_identity_name:
+        description: Optional exact Partner Center package identity (all three identity fields required together)
+        required: false
+        type: string
+      store_publisher:
+        description: Optional exact Partner Center publisher (CN=...)
+        required: false
+        type: string
+      store_publisher_display_name:
+        description: Optional exact Partner Center publisher display name
+        required: false
+        type: string
+      store_display_name:
+        description: Reserved Microsoft Store display name
+        required: false
+        default: FairyStack
+        type: string
 permissions:
   contents: read
 jobs:
@@ -117,12 +134,32 @@ jobs:
           if (@(Get-Process FairyStack | Where-Object Path -eq $installed).Count -ne 1) { throw 'more than one FairyStack is running' }
           Get-Process FairyStack | Stop-Process -Force
           "PASS: installed $version, window open, links registered, single instance"
+      - name: Install MSIX and verify native packaged behavior
+        timeout-minutes: 6
+        run: ./packaging/test-msix.ps1 -PublishDirectory publish -OutputDirectory dist
+      - name: Build Microsoft Store submission package when identity is configured
+        timeout-minutes: 3
+        env:
+          STORE_NAME: ${{ inputs.store_identity_name }}
+          STORE_PUBLISHER: ${{ inputs.store_publisher }}
+          STORE_PUBLISHER_DISPLAY_NAME: ${{ inputs.store_publisher_display_name }}
+          STORE_DISPLAY_NAME: ${{ inputs.store_display_name }}
+        run: |
+          $fields = @($env:STORE_NAME,$env:STORE_PUBLISHER,$env:STORE_PUBLISHER_DISPLAY_NAME)
+          $provided = @($fields | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+          if ($provided -eq 0) {
+            @{status='waiting_for_partner_center'; store_published=$false; detail='Development MSIX validated; production package requires the reserved Store identity.'} | ConvertTo-Json | Set-Content dist/store-submission-status.json
+          } elseif ($provided -ne 3) {
+            throw 'All three Partner Center identity fields must be provided together'
+          } else {
+            ./packaging/build-msix.ps1 -PublishDirectory publish -OutputDirectory dist -IdentityName $env:STORE_NAME -Publisher $env:STORE_PUBLISHER -PublisherDisplayName $env:STORE_PUBLISHER_DISPLAY_NAME -DisplayName $env:STORE_DISPLAY_NAME
+          }
       - name: FairyStack log (on failure)
         if: failure()
         run: Get-Content (Join-Path $env:LOCALAPPDATA 'FairyStack\fairystack.log') -ErrorAction SilentlyContinue
       - name: Package
         run: |
-          Get-FileHash dist/*.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist/archive.sha256
+          Get-ChildItem dist -File | Where-Object Extension -in '.exe','.msix' | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist/archive.sha256
           Copy-Item source-receipt.txt dist/
           Get-Content dist/archive.sha256
       - uses: actions/upload-artifact@v4
