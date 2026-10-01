@@ -10,6 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import winreg
 
 from playwright.sync_api import sync_playwright
 from pywinauto import Application
@@ -73,6 +74,13 @@ def main():
         assert process.wait(timeout=60) == 0
         installed = Path(os.environ['LOCALAPPDATA'])/'Programs/FairyStack/FairyStack.exe'
         assert hashlib.sha256(installed.read_bytes()).hexdigest() == meta['download_sha256']
+        # Shell installation can relaunch through Explorer's environment. Launch
+        # the installed binary directly; registry policy also covers WebView2's
+        # inherited startup environment without changing shipped client code.
+        subprocess.run(['taskkill', '/F', '/IM', 'FairyStack.exe'], timeout=15, capture_output=True)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r'Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments') as key:
+            winreg.SetValueEx(key, '*', 0, winreg.REG_SZ, os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'])
+        subprocess.Popen([str(installed)], env=os.environ.copy())
         app = Application(backend='win32').connect(path=str(installed), timeout=30)
         window = app.top_window()
         window.wait('visible', timeout=30)
@@ -86,6 +94,8 @@ def main():
                     break
                 except Exception:
                     time.sleep(.3)
+            else:
+                raise TimeoutError('Installed WebView2 did not expose its debug endpoint within 30 seconds')
             browser = p.chromium.connect_over_cdp('http://127.0.0.1:9222', timeout=10000)
             context = browser.contexts[0]
             context.route('**/*', intercept)
