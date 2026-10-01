@@ -3,6 +3,11 @@ name: Exercise Windows and Android client UIs
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: Client to exercise
+        default: both
+        type: choice
+        options: [both, windows, android]
       android_source_base64:
         description: Checksummed gzip tar of canonical Android source
         required: true
@@ -19,6 +24,7 @@ permissions:
 
 jobs:
   windows:
+    if: inputs.platform != 'android'
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
@@ -38,6 +44,7 @@ jobs:
           retention-days: 30
 
   android:
+    if: inputs.platform != 'windows'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
