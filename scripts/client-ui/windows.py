@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import time
 import urllib.error
 import urllib.request
@@ -70,14 +71,20 @@ def main():
         settings.mkdir(exist_ok=True)
         (settings/'settings.json').write_text(json.dumps({'origin': 'https://multi.fairystack.com/', 'window_open': True}))
         os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--remote-debugging-port=9222 --proxy-server=127.0.0.1:9 --proxy-bypass-list=<-loopback>'
-        process = subprocess.Popen([str(setup)])
+        # Install with no saved window. The first WebView2 process is then owned
+        # by the direct installed-client launch, with the test environment.
+        (settings/'settings.json').write_text(json.dumps({'origin': 'https://multi.fairystack.com/', 'window_open': False}))
+        process = subprocess.Popen([str(setup)], env=os.environ.copy())
         assert process.wait(timeout=60) == 0
         installed = Path(os.environ['LOCALAPPDATA'])/'Programs/FairyStack/FairyStack.exe'
         assert hashlib.sha256(installed.read_bytes()).hexdigest() == meta['download_sha256']
         # Shell installation can relaunch through Explorer's environment. Launch
         # the installed binary directly; registry policy also covers WebView2's
         # inherited startup environment without changing shipped client code.
-        subprocess.run(['taskkill', '/F', '/IM', 'FairyStack.exe'], timeout=15, capture_output=True)
+        subprocess.run(['taskkill', '/T', '/F', '/IM', 'FairyStack.exe'], timeout=15, capture_output=True)
+        time.sleep(2)
+        shutil.rmtree(settings/'WebView2', ignore_errors=True)
+        (settings/'settings.json').write_text(json.dumps({'origin': 'https://multi.fairystack.com/', 'window_open': True}))
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r'Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments') as key:
             winreg.SetValueEx(key, '*', 0, winreg.REG_SZ, os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'])
         subprocess.Popen([str(installed)], env=os.environ.copy())
@@ -95,6 +102,9 @@ def main():
                 except Exception:
                     time.sleep(.3)
             else:
+                diagnostics = subprocess.run(['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'FairyStack|msedgewebview2' } | Select-Object Name,ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Depth 3"], capture_output=True, text=True, timeout=20)
+                (OUT/'processes.json').write_text(diagnostics.stdout)
+                (OUT/'netstat.txt').write_text(subprocess.check_output(['netstat','-ano'], text=True, timeout=15))
                 raise TimeoutError('Installed WebView2 did not expose its debug endpoint within 30 seconds')
             browser = p.chromium.connect_over_cdp('http://127.0.0.1:9222', timeout=10000)
             context = browser.contexts[0]
