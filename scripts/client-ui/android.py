@@ -106,6 +106,7 @@ def test():
         run([BT/'apksigner', 'sign', '--ks', key, '--ks-pass', 'pass:disposable', '--out', b/'smoke.apk', b/'aligned.apk'])
         adb('install', '-r', app)
         adb('install', '-r', b/'smoke.apk')
+        adb('logcat', '-c')
         # This existing instrumented runner blocks writes before exercising the
         # live workspace, then covers storage, file picker, consent and deadline.
         result = adb('shell', 'am', 'instrument', '-w', 'com.fairystack.android.tests/.Smoke', capture_output=True, text=True, timeout=180).stdout
@@ -135,13 +136,15 @@ def test():
         report.update(status='failed', error=str(e))
         try:
             screenshot('android-failure')
+            state = adb('shell', 'dumpsys', 'activity', 'activities', capture_output=True, text=True).stdout
+            (OUT/'activities.txt').write_text(state)
         except Exception:
             pass
         raise
     finally:
         (OUT/'android.json').write_text(json.dumps(report, indent=2))
         try:
-            logs = adb('logcat', '-d', '-t', '1200', capture_output=True, text=True).stdout
+            logs = adb('logcat', '-d', '-v', 'threadtime', 'chromium:V', 'ActivityTaskManager:I', 'AndroidRuntime:E', 'Instrumentation:I', '*:S', capture_output=True, text=True).stdout
             (OUT/'logcat.txt').write_text(logs)
         except Exception:
             pass
