@@ -41,14 +41,16 @@ def nodes():
     return ET.fromstring(xml).iter('node')
 
 
-def tap(text, contains=False, limit=15):
+def tap(text, contains=False, limit=15, click=True):
+    wanted = text.casefold()
     end = time.monotonic() + limit
     while time.monotonic() < end:
         for node in nodes():
-            value = node.get('text', '')
-            if (text in value if contains else text == value):
+            value = node.get('text', '').casefold()
+            if (wanted in value if contains else wanted == value):
                 x1, y1, x2, y2 = map(int, re.findall(r'\d+', node.get('bounds')))
-                adb('shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2))
+                if click:
+                    adb('shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2))
                 return
         time.sleep(.3)
     raise AssertionError('Visible UI control not found: ' + text)
@@ -118,8 +120,10 @@ def test():
         time.sleep(3)
         screenshot('android-light')
         tap('FairyStack ·', contains=True)
+        tap('Add a FairyStack', contains=True, click=False)
         screenshot('android-server-menu')
         tap('Add a FairyStack', contains=True)
+        tap('Cancel', click=False)
         screenshot('android-add-server')
         tap('Cancel')
         report['checks'].append('Native server menu and Add dialog opened with real coordinate taps; cancelled')
