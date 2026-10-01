@@ -50,7 +50,7 @@ class Fixture(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Set-Cookie', 'client_ui=stored; Secure; SameSite=Strict; Path=/')
+        self.send_header('Set-Cookie', 'client_ui=stored; Max-Age=3600; Secure; SameSite=Strict; Path=/')
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -164,11 +164,13 @@ def main():
         saved = json.loads((settings/'settings.json').read_text())
         saved['window_open'] = True
         (settings/'settings.json').write_text(json.dumps(saved))
+        restart_index = len(requests)
         subprocess.Popen([str(installed)])
         window = connect(installed)
         window.capture_as_image().save(OUT/'windows-dark.png')
-        assert any(x['cookie_present'] for x in requests)
-        report['checks'].append('Fresh launch retained browser cookies; dark rendering captured')
+        reopened = [x for x in requests[restart_index:] if x['path'] == '/workspace/']
+        assert reopened and reopened[0]['cookie_present'], 'First document after process restart lost its persistent cookie'
+        report['checks'].append('First document after process restart retained its persistent cookie; dark rendering captured')
         report.update(status='completed', version=meta['version'], limitations='Isolated HTTPS fixtures; prior run verified public sign-in rendering. No authenticated chat, real microphone, SmartScreen or Parallels/ARM compatibility exercised.')
     except BaseException as e:
         report.update(status='failed', error=str(e))
