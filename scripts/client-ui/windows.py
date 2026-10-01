@@ -161,6 +161,9 @@ def main():
         window.close()
         subprocess.run(['taskkill', '/T', '/F', '/IM', 'FairyStack.exe'], timeout=15, capture_output=True)
         theme(True)
+        saved = json.loads((settings/'settings.json').read_text())
+        saved['window_open'] = True
+        (settings/'settings.json').write_text(json.dumps(saved))
         subprocess.Popen([str(installed)])
         window = connect(installed)
         window.capture_as_image().save(OUT/'windows-dark.png')
