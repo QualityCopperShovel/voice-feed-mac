@@ -80,7 +80,9 @@ def start_fixture():
     certfile, keyfile = folder/'client-ui-cert.pem', folder/'client-ui-key.pem'
     certfile.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     keyfile.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    subprocess.run(['certutil', '-user', '-addstore', 'Root', str(certfile)], check=True, timeout=15)
+    # Current-user root installation opens a confirmation dialog. The disposable
+    # hosted runner is already administrator; machine trust is noninteractive.
+    subprocess.run(['certutil', '-f', '-addstore', 'Root', str(certfile)], check=True, timeout=15)
     server = ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     server.daemon_threads = True
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -113,7 +115,7 @@ def main():
         assert hashlib.sha256(data).hexdigest() == meta['download_sha256']
         (OUT/'release.json').write_text(json.dumps(meta, indent=2))
         server, thumbprint = start_fixture()
-        origin = f'https://localhost:{server.server_port}/'
+        origin = f'https://127.0.0.1:{server.server_port}/'
         setup = Path(os.environ['RUNNER_TEMP'])/'FairyStack-Setup.exe'
         setup.write_bytes(data)
         settings = Path(os.environ['LOCALAPPDATA'])/'FairyStack'
@@ -182,7 +184,7 @@ def main():
             server.shutdown()
             server.server_close()
         if thumbprint:
-            subprocess.run(['certutil', '-user', '-delstore', 'Root', thumbprint], timeout=15, capture_output=True)
+            subprocess.run(['certutil', '-delstore', 'Root', thumbprint], timeout=15, capture_output=True)
 
 
 if __name__ == '__main__':
