@@ -19,7 +19,7 @@ OUT = Path('evidence')
 OUT.mkdir(exist_ok=True)
 SDK = Path(os.environ['ANDROID_HOME'])
 SOURCE = Path('client/native/android')
-BT = SDK / 'build-tools/35.0.0'
+BT = SDK / 'build-tools/36.0.0'
 
 
 def run(args, timeout=90, **kw):
@@ -96,7 +96,7 @@ def test():
         b.mkdir()
         (b/'classes').mkdir()
         (b/'dex').mkdir()
-        jar = SDK/'platforms/android-35/android.jar'
+        jar = SDK/'platforms/android-36/android.jar'
         run([BT/'aapt2', 'link', '-I', jar, '--manifest', SOURCE/'instrumentation/AndroidManifest.xml', '-o', b/'resources.apk'])
         run(['javac', '-source', '8', '-target', '8', '-classpath', jar, '-d', b/'classes', *sorted((SOURCE/'instrumentation').rglob('*.java'))])
         run([BT/'d8', '--min-api', '26', '--lib', jar, '--output', b/'dex', *sorted((b/'classes').rglob('*.class'))])

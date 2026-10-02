@@ -61,11 +61,11 @@ jobs:
         run: |
           python3 scripts/client-ui/android.py prepare
           sudo chmod a+rw /dev/kvm
-          timeout 300 bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "system-images;android-35;google_apis;x86_64"'
+          timeout 300 bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "system-images;android-36;google_apis;x86_64"'
           export ANDROID_AVD_HOME="$RUNNER_TEMP/client-avds"
           mkdir -p "$ANDROID_AVD_HOME"
           echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n client-ui -k 'system-images;android-35;google_apis;x86_64' --path "$ANDROID_AVD_HOME/client-ui.avd" --force
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n client-ui -k 'system-images;android-36;google_apis;x86_64' --path "$ANDROID_AVD_HOME/client-ui.avd" --force
           "$ANDROID_HOME/emulator/emulator" -list-avds | tee evidence/avds.txt
           grep -qx client-ui evidence/avds.txt
           "$ANDROID_HOME/emulator/emulator" -avd client-ui -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > evidence/emulator.log 2>&1 &
